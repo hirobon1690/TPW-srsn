@@ -1056,7 +1056,11 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
             });
           }
 
-          if (attributesToTranslateNow.length > 0) {
+          // Sarashina allows only 6 requests per minute, keep them for the page text
+          if (
+            attributesToTranslateNow.length > 0 &&
+            currentPageTranslatorService !== "sarashina"
+          ) {
             backgroundTranslateText(
               currentPageTranslatorService,
               currentSourceLanguage,
