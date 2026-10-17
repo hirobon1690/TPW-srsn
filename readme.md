@@ -21,13 +21,21 @@
 
 ### インストール方法（Chrome / Edge / Brave）
 
-1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `TWP-srsn-*.zip` をダウンロードし、任意の場所に展開します。展開したフォルダは、使い続ける間は削除・移動しないでください。
+1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `TWP-srsn-*-chrome.zip` をダウンロードし、任意の場所に展開します。展開したフォルダは、使い続ける間は削除・移動しないでください。
 2. ブラウザで `chrome://extensions` にアクセスし、「デベロッパーモード」を有効にします。
 3. 「パッケージ化されていない拡張機能を読み込む」を選択し、展開したフォルダ（`manifest.json` が入っているフォルダ）を指定します。
-4. オプション画面の「Experimental」タブで、Sarashina API のキーを登録します。
+4. オプション画面の「実験的」（Experimental）タブにある「Sarashina Config」で、API キーを登録します。
 5. ページ翻訳の設定で、翻訳サービスとして「Sarashina (ja/en)」を選択します。
 
 本家の TWP がすでに入っている場合は、競合しないように無効にしてください。自動更新はないため、新しいバージョンが出たときは ZIP をダウンロードし直してフォルダの中身を入れ替え、`chrome://extensions` で拡張機能を再読み込みしてください。
+
+### インストール方法（Firefox）
+
+1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `TWP-srsn-*-firefox.zip` をダウンロードします（展開は不要です）。
+2. Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む…」から、ダウンロードした ZIP を選択します。
+3. 以降の設定は Chrome と同じです。
+
+この方法で読み込んだアドオンは、Firefox を再起動すると消えます（Mozilla の署名がないため、通常の Firefox には常にインストールしておくことができません）。Firefox Developer Edition や Nightly では、`about:config` で `xpinstall.signatures.required` を `false` にすると、署名のないアドオンをインストールできますが、この方法は試していません。
 
 ### 制限事項
 
