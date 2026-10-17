@@ -52,7 +52,8 @@ const twpConfig = (function () {
     translateSelectedWhenPressTwice: "no",
     translateTextOverMouseWhenPressTwice: "no",
     translateClickingOnce: "no",
-    enableDiskCache: "no",
+    // on by default: Sarashina allows only a few requests per minute
+    enableDiskCache: "yes",
     useAlternativeService: "yes",
     customServices: [],
     showMobilePopupOnDesktop: "no",
