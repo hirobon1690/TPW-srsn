@@ -1,0 +1,55 @@
+name: Release
+
+# Builds chrome.zip and firefox.zip and publishes them as the only release.
+on:
+  push:
+    branches: [srsn]
+    paths:
+      - "src/**"
+      - "tools/build-release.sh"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build packages
+        run: bash tools/build-release.sh build/release
+
+      - name: Choose the tag
+        id: tag
+        run: |
+          version=$(jq -r .version src/manifest.json)
+          # next number after the existing v<version>-srsn.<n> releases
+          last=$(gh release list --limit 100 --json tagName --jq '.[].tagName' \
+            | sed -n "s/^v${version//./\\.}-srsn\.\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1)
+          echo "tag=v${version}-srsn.$(( ${last:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the release
+        run: |
+          gh release create "${{ steps.tag.outputs.tag }}" \
+            build/release/chrome.zip build/release/firefox.zip \
+            --target "$GITHUB_SHA" \
+            --title "TWP-srsn ${{ steps.tag.outputs.tag }}" \
+            --notes ""
+
+      - name: Delete the older releases
+        run: |
+          gh release list --limit 100 --json tagName --jq '.[].tagName' \
+            | { grep -vx "${{ steps.tag.outputs.tag }}" || true; } \
+            | while read -r tag; do
+                gh release delete "$tag" --yes --cleanup-tag
+              done
