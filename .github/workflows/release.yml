@@ -33,9 +33,9 @@ jobs:
         id: tag
         run: |
           version=$(jq -r .version src/manifest.json)
-          # next number after the existing v<version>-srsn.<n> releases
-          last=$(gh release list --limit 100 --json tagName --jq '.[].tagName' \
-            | sed -n "s/^v${version//./\\.}-srsn\.\([0-9][0-9]*\)$/\1/p" | sort -n | tail -1)
+          # Tags remain after older releases are deleted, so choose the next number from tags.
+          last=$(git ls-remote --refs --tags origin "v${version}-srsn.*" \
+            | sed -n "s#.*refs/tags/v${version//./\\.}-srsn\.\([0-9][0-9]*\)$#\1#p" | sort -n | tail -1)
           echo "tag=v${version}-srsn.$(( ${last:-0} + 1 ))" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
@@ -48,6 +48,7 @@ jobs:
 
       - name: Delete the older releases (their tags are kept)
         run: |
+          # gh release delete leaves the tag in place without --cleanup-tag.
           gh release list --limit 100 --json tagName --jq '.[].tagName' \
             | { grep -vx "${{ steps.tag.outputs.tag }}" || true; } \
             | while read -r tag; do
