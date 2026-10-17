@@ -996,6 +996,19 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
       return rect.top > 0 ? rect.top : 2 * innerHeight - rect.bottom;
     };
 
+    const isNodeVisible = (node) => {
+      const parent = node.parentElement;
+      return parent?.checkVisibility ? parent.checkVisibility() : true;
+    };
+
+    // Text of a piece. Hidden nodes are left out when some are visible (Wikipedia's table of contents
+    // starts with a hidden section number); if all are hidden (a collapsed list), all are translated.
+    const getPieceText = (ptt, sourceArray) => {
+      const visible = ptt.nodes.map(isNodeVisible);
+      if (!visible.some((v) => v)) return sourceArray.join("");
+      return sourceArray.filter((_, j) => visible[j]).join("");
+    };
+
     // group consecutive pieces of the same text block
     const units = [];
     for (const ptt of piecesToTranslate) {
@@ -1022,7 +1035,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
     units.forEach((unit) => {
       unit.sourceArray = [
         getSourceArray2d(unit.pieces)
-          .map((sourceArray) => sourceArray.join(""))
+          .map((sourceArray, i) => getPieceText(unit.pieces[i], sourceArray))
           .join(sarashinaSeparator),
       ];
       unit.distance = Math.min(...unit.pieces.map(distanceFromScreen));
@@ -1048,9 +1061,34 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
           parts = [translated, ...unit.pieces.slice(1).map(() => " ")];
         }
       }
-      return unit.pieces.map((ptt, i) =>
-        ptt.nodes.map((_, j) => (j === 0 ? parts[i] || " " : " "))
-      );
+      return unit.pieces.map((ptt, i) => {
+        const mainNode = getMainNodeIndex(ptt);
+        const visible = ptt.nodes.map(isNodeVisible);
+        const someVisible = visible.some((v) => v);
+        return ptt.nodes.map((node, j) => {
+          if (j === mainNode) return parts[i] || " ";
+          // hidden nodes left out of the translation keep their text
+          if (someVisible && !visible[j]) return node.textContent;
+          return " ";
+        });
+      });
+    };
+
+    /**
+     * The node that shows the translation of a piece: the longest visible one. Hidden nodes keep their
+     * original text.
+     */
+    const getMainNodeIndex = (ptt) => {
+      let mainNode = 0;
+      let bestScore = -1;
+      ptt.nodes.forEach((node, j) => {
+        const score = (isNodeVisible(node) ? 1e6 : 0) + node.textContent.trim().length;
+        if (score > bestScore) {
+          mainNode = j;
+          bestScore = score;
+        }
+      });
+      return mainNode;
     };
 
     // send in small groups so each group is shown as soon as it's translated
