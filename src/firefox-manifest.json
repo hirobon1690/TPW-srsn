@@ -4,10 +4,10 @@
   "name": "TWP - Translate Web Pages",
   "description": "__MSG_extensionDescription__",
   "version": "10.2.5.0",
-  "homepage_url": "https://github.com/FilipePS/Traduzir-paginas-web",
+  "homepage_url": "https://github.com/hirobon1690/TWP-srsn",
   "browser_specific_settings": {
     "gecko": {
-      "id": "twp-srsn@hirobon1690.github.io",
+      "id": "{d454b85b-1462-4d17-bbb8-37e4a13e341f}",
       "strict_min_version": "109.0"
     }
   },
