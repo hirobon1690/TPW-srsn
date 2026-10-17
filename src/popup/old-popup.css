@@ -199,3 +199,9 @@ option {
   scale: 1.03;
   box-shadow: 0 0 3px -2px black;
 }
+
+/* hidden: the selected text button option and "Improve translation" */
+#divShowTranslateSelectedButton,
+#divImproveTranslation {
+  display: none !important;
+}
