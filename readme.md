@@ -21,7 +21,7 @@
 
 ### インストール方法（Chrome / Edge / Brave）
 
-1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `TWP-srsn-*-chrome.zip` をダウンロードし、任意の場所に展開します。展開したフォルダは、使い続ける間は削除・移動しないでください。
+1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `chrome.zip` をダウンロードし、任意の場所に展開します。展開したフォルダは、使い続ける間は削除・移動しないでください。
 2. ブラウザで `chrome://extensions` にアクセスし、「デベロッパーモード」を有効にします。
 3. 「パッケージ化されていない拡張機能を読み込む」を選択し、展開したフォルダ（`manifest.json` が入っているフォルダ）を指定します。
 4. オプション画面の「実験的」（Experimental）タブにある「Sarashina Config」で、API キーを登録します。
@@ -31,7 +31,7 @@
 
 ### インストール方法（Firefox）
 
-1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `TWP-srsn-*-firefox.zip` をダウンロードします（展開は不要です）。
+1. [Releases](https://github.com/hirobon1690/TWP-srsn/releases/latest) から最新の `firefox.zip` をダウンロードします（展開は不要です）。
 2. Firefox で `about:debugging#/runtime/this-firefox` を開き、「一時的なアドオンを読み込む…」から、ダウンロードした ZIP を選択します。
 3. 以降の設定は Chrome と同じです。
 
