@@ -1545,12 +1545,101 @@ const translationService = (function () {
   };
 
   /**
+   * Aligns translated lines to source lines by length (Gale-Church), allowing merged and split lines.
+   * @param {string[]} sources
+   * @param {string[]} targets
+   * @returns {(string|null)[]} the translation of each source line; null if the line was dropped,
+   *   " " if it was merged into the previous line.
+   */
+  const alignLines = (sources, targets) => {
+    const n = sources.length;
+    const m = targets.length;
+    const sourceLengths = sources.map((s) => s.length);
+    const targetLengths = targets.map((t) => t.length);
+    const ratio =
+      targetLengths.reduce((a, b) => a + b, 0) /
+      Math.max(1, sourceLengths.reduce((a, b) => a + b, 0));
+    // [source lines, target lines, penalty]
+    const moves = [
+      [1, 1, 0],
+      [2, 1, 1],
+      [3, 1, 1.5],
+      [4, 1, 2],
+      [5, 1, 2.5],
+      [1, 2, 1.5],
+      [1, 0, 3],
+      [0, 1, 3],
+    ];
+    // numbers and acronyms (12.108, L3, MeV) are usually kept as is by the translation
+    const anchorRegex = /\d[\d.,]*|[A-Za-z]*\d[A-Za-z\d]*|[A-Z][a-z]?[A-Z][A-Za-z]*/g;
+    const sourceAnchors = sources.map((s) => s.match(anchorRegex) || []);
+    const anchorCost = (i, ds, j, dt) => {
+      const anchors = sourceAnchors.slice(i, i + ds).flat();
+      const text = targets.slice(j, j + dt).join(" ");
+      if (anchors.length === 0) return /\d/.test(text) ? 1 : 0;
+      const found = anchors.filter((a) => text.includes(a)).length / anchors.length;
+      return 1 - 2 * found;
+    };
+    const sum = (lengths, from, count) => {
+      let total = 0;
+      for (let k = from; k < from + count; k++) total += lengths[k];
+      return total;
+    };
+    const cost = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(Infinity));
+    const back = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(null));
+    cost[0][0] = 0;
+    for (let i = 0; i <= n; i++) {
+      for (let j = 0; j <= m; j++) {
+        if (cost[i][j] === Infinity) continue;
+        for (const move of moves) {
+          const [ds, dt, penalty] = move;
+          if (i + ds > n || j + dt > m) continue;
+          const expected = sum(sourceLengths, i, ds) * ratio;
+          const actual = sum(targetLengths, j, dt);
+          const c =
+            cost[i][j] +
+            penalty +
+            Math.abs(actual - expected) / Math.sqrt(expected + actual + 10) +
+            (dt > 0 ? anchorCost(i, ds, j, dt) : 0);
+          if (c < cost[i + ds][j + dt]) {
+            cost[i + ds][j + dt] = c;
+            back[i + ds][j + dt] = move;
+          }
+        }
+      }
+    }
+
+    const result = new Array(n).fill(" ");
+    let i = n;
+    let j = m;
+    const steps = [];
+    while (i > 0 || j > 0) {
+      const [ds, dt] = back[i][j];
+      steps.unshift([i - ds, j - dt, ds, dt]);
+      i -= ds;
+      j -= dt;
+    }
+    let previous = -1;
+    for (const [si, ti, ds, dt] of steps) {
+      const text = targets.slice(ti, ti + dt).join(" ");
+      if (ds === 0) {
+        if (previous >= 0) result[previous] += " " + text;
+        else if (n > 0) result[0] = text + " " + result[0];
+      } else {
+        result[si] = dt === 0 ? null : text;
+        previous = si;
+      }
+    }
+    return result;
+  };
+
+  /**
    * @typedef {Object} SarashinaQueueItem
+   * @property {string} key Identifies the paragraph this item belongs to (used to prioritize it).
    * @property {string} text
    * @property {string} sourceLanguage
    * @property {string} targetLanguage
    * @property {boolean} isTextTranslation Text translations keep their line breaks and are never batched with other items.
-   * @property {number} maxBatchItems Lowered when the result of a batch couldn't be matched to its paragraphs.
    * @property {(translatedText: string) => void} resolve
    * @property {(reason?: any) => void} reject
    */
@@ -1561,23 +1650,41 @@ const translationService = (function () {
    * The API only translates between ja and en, accepts a single text per request (max 5000 characters)
    * and is limited to 6 requests per minute. So instead of using the request logic of `Service`,
    * paragraphs are queued and packed one per line into batches that are sent through a rate limiter.
-   * The newest paragraphs (the ones the user is looking at) and text translations are sent first.
+   *
+   * The page translator sends the whole page, ordered by distance from the viewport. When the remaining
+   * paragraphs fit in the free request slots, they are split evenly between them and sent in parallel;
+   * otherwise each request is filled up to `MAX_BATCH_LENGTH`. One slot is kept for text translations.
    * @param {string} apiKey
    * @returns {Service} sarashinaService
    */
   const createSarashinaService = (apiKey) => {
     const API_URL = "https://api.sarashina.ai/v1/translate";
     const MAX_TEXT_LENGTH = 5000;
-    // Larger batches are slower (~3.5s per 1000 characters) and the model is more likely to merge or repeat lines.
-    const MAX_BATCH_LENGTH = 3000;
+    // ~3.5s per 1000 characters. Leaves room below MAX_TEXT_LENGTH for the line breaks.
+    const MAX_BATCH_LENGTH = 4500;
+    // Don't split the remaining paragraphs into batches smaller than this.
+    const MIN_SPLIT_LENGTH = 1000;
+    // When the page doesn't fit in the free slots, the first batch is kept small so the paragraphs
+    // on screen are shown in a few seconds.
+    const FIRST_BATCH_LENGTH = 1500;
     const MAX_REQUESTS_PER_MINUTE = 6;
+    // A request sent exactly 60s after the first one of the window was still rejected.
+    const RATE_LIMIT_WINDOW = 62000;
+    // Request slots that page translation leaves free for text translations.
+    const RESERVED_FOR_TEXT_TRANSLATION = 1;
+    // Wait for the other messages of the same burst before planning the batches.
+    const COALESCE_DELAY = 300;
 
     /** @type {SarashinaQueueItem[]} */
-    const queue = [];
+    let queue = [];
     /** @type {number[]} */
     const requestTimes = [];
     let pausedUntil = 0;
     let requestsInFlight = 0;
+    // translate() calls that are still looking up the cache; their paragraphs are not queued yet
+    let pendingLookups = 0;
+    // the queue was empty and nothing was in flight when the current paragraphs were queued
+    let startedFromIdle = false;
     let pumpTimeout = null;
     let keepAliveInterval = null;
 
@@ -1631,52 +1738,118 @@ const translationService = (function () {
     };
 
     /**
-     * Takes the next batch from the queue: text translations first, then the newest page paragraphs
-     * with the same language pair that fit in `MAX_BATCH_LENGTH`.
-     * @returns {SarashinaQueueItem[]}
+     * Puts items back at the front of the queue, after the text translations.
+     * @param {SarashinaQueueItem[]} items
      */
-    const takeBatch = () => {
-      let firstIndex = queue.findIndex((item) => item.isTextTranslation);
-      if (firstIndex === -1) firstIndex = queue.length - 1;
-      const first = queue.splice(firstIndex, 1)[0];
-      const batch = [first];
-      if (first.isTextTranslation) return batch;
+    const putInFront = (items) => {
+      const textTranslations = queue.filter((item) => item.isTextTranslation);
+      const others = queue.filter(
+        (item) => !item.isTextTranslation && !items.includes(item),
+      );
+      queue = [...textTranslations, ...items, ...others];
+    };
 
-      let length = first.text.length;
-      for (let i = queue.length - 1; i >= 0; i--) {
-        const item = queue[i];
-        if (batch.length >= first.maxBatchItems) break;
-        if (
-          item.isTextTranslation ||
-          item.maxBatchItems <= batch.length ||
-          item.sourceLanguage !== first.sourceLanguage ||
-          item.targetLanguage !== first.targetLanguage ||
-          length + 1 + item.text.length > MAX_BATCH_LENGTH
-        )
-          continue;
-        batch.push(item);
-        length += 1 + item.text.length;
-        queue.splice(i, 1);
+    /**
+     * Takes the page paragraphs for up to `slots` requests from the front of the queue.
+     * @param {number} slots
+     * @returns {SarashinaQueueItem[][]}
+     */
+    const planPageBatches = (slots) => {
+      const first = queue.find((item) => !item.isTextTranslation);
+      if (!first) return [];
+      const candidates = queue.filter(
+        (item) =>
+          !item.isTextTranslation &&
+          item.sourceLanguage === first.sourceLanguage &&
+          item.targetLanguage === first.targetLanguage,
+      );
+      const totalLength = candidates.reduce(
+        (total, item) => total + item.text.length + 1,
+        0,
+      );
+
+      let targetLength = MAX_BATCH_LENGTH;
+      if (totalLength <= slots * MAX_BATCH_LENGTH) {
+        // Everything fits: split it evenly so the requests finish at about the same time.
+        // If one slot can be spared, keep it for content added to the page later.
+        const usableSlots =
+          slots > 1 && totalLength <= (slots - 1) * MAX_BATCH_LENGTH
+            ? slots - 1
+            : slots;
+        const batchCount = Math.min(
+          usableSlots,
+          Math.max(1, Math.ceil(totalLength / MIN_SPLIT_LENGTH)),
+        );
+        targetLength = Math.ceil(totalLength / batchCount);
       }
-      return batch;
+
+      const keepFirstBatchSmall =
+        totalLength > slots * MAX_BATCH_LENGTH && startedFromIdle;
+      startedFromIdle = false;
+
+      const batches = [];
+      let index = 0;
+      while (batches.length < slots && index < candidates.length) {
+        const batchTargetLength =
+          batches.length === 0 && keepFirstBatchSmall
+            ? Math.min(targetLength, FIRST_BATCH_LENGTH)
+            : targetLength;
+        const batch = [];
+        let length = 0;
+        while (index < candidates.length) {
+          const item = candidates[index];
+          if (
+            batch.length > 0 &&
+            (length + item.text.length + 1 > MAX_BATCH_LENGTH ||
+              length >= batchTargetLength)
+          )
+            break;
+          batch.push(item);
+          length += item.text.length + 1;
+          index++;
+        }
+        batches.push(batch);
+      }
+
+      const taken = new Set(batches.flat());
+      queue = queue.filter((item) => !taken.has(item));
+      return batches;
     };
 
     const pump = () => {
-      while (queue.length > 0) {
-        const now = Date.now();
-        while (requestTimes.length > 0 && requestTimes[0] <= now - 60000) {
-          requestTimes.shift();
+      const now = Date.now();
+      while (
+        requestTimes.length > 0 &&
+        requestTimes[0] <= now - RATE_LIMIT_WINDOW
+      ) {
+        requestTimes.shift();
+      }
+
+      if (pendingLookups > 0) {
+        schedulePump(COALESCE_DELAY);
+      } else if (queue.length > 0 && pausedUntil > now) {
+        schedulePump(pausedUntil - now);
+      } else if (queue.length > 0) {
+        let freeSlots = MAX_REQUESTS_PER_MINUTE - requestTimes.length;
+
+        while (freeSlots > 0 && queue[0]?.isTextTranslation) {
+          requestTimes.push(now);
+          sendBatch([queue.shift()]);
+          freeSlots--;
         }
-        if (pausedUntil > now) {
-          schedulePump(pausedUntil - now);
-          break;
+
+        const pageSlots = freeSlots - RESERVED_FOR_TEXT_TRANSLATION;
+        if (pageSlots > 0) {
+          for (const batch of planPageBatches(pageSlots)) {
+            requestTimes.push(now);
+            sendBatch(batch);
+          }
         }
-        if (requestTimes.length >= MAX_REQUESTS_PER_MINUTE) {
-          schedulePump(requestTimes[0] + 60000 - now + 100);
-          break;
+
+        if (queue.length > 0 && requestTimes.length > 0) {
+          // wait for the next free slot
+          schedulePump(requestTimes[0] + RATE_LIMIT_WINDOW - now + 100);
         }
-        requestTimes.push(now);
-        sendBatch(takeBatch());
       }
       updateKeepAlive();
     };
@@ -1702,8 +1875,11 @@ const translationService = (function () {
 
         if (response.status === 429) {
           const retryAfter = parseInt(response.headers.get("Retry-After"));
-          pausedUntil = Date.now() + (isNaN(retryAfter) ? 60 : retryAfter) * 1000;
-          queue.push(...batch.reverse());
+          pausedUntil = Math.max(
+            pausedUntil,
+            Date.now() + (isNaN(retryAfter) ? 60 : retryAfter) * 1000,
+          );
+          putInFront(batch);
           return;
         }
         if (!response.ok) {
@@ -1727,13 +1903,21 @@ const translationService = (function () {
         if (lines.length === batch.length) {
           batch.forEach((item, i) => item.resolve(lines[i]));
         } else {
-          // The model merged or split some lines, so the result can't be matched to the paragraphs.
+          // The model merged or split some lines (usually sentence fragments around inline formulas).
+          // Resending them would fail the same way, so match the lines by length instead.
           console.warn(
-            `Sarashina: expected ${batch.length} lines, got ${lines.length}. Retrying in smaller batches.`,
+            `Sarashina: expected ${batch.length} lines, got ${lines.length}. Aligning them by length.`,
           );
-          const maxBatchItems = Math.ceil(batch.length / 2);
-          batch.forEach((item) => (item.maxBatchItems = maxBatchItems));
-          queue.push(...batch.reverse());
+          const aligned = alignLines(
+            batch.map((item) => item.text),
+            lines,
+          );
+          const dropped = [];
+          batch.forEach((item, i) => {
+            if (aligned[i] === null) dropped.push(item);
+            else item.resolve(aligned[i]);
+          });
+          if (dropped.length > 0) putInFront(dropped);
         }
       } catch (e) {
         console.error(e);
@@ -1742,6 +1926,34 @@ const translationService = (function () {
         requestsInFlight--;
         schedulePump(0);
       }
+    };
+
+    /**
+     * @param {string} sourceLanguage
+     * @param {string} targetLanguage
+     * @returns {[string, string] | null} `[sourceLanguage, targetLanguage]`, or null if the target is not supported.
+     */
+    const fixLanguages = (sourceLanguage, targetLanguage) => {
+      if (targetLanguage !== "ja" && targetLanguage !== "en") return null;
+      if (
+        (sourceLanguage !== "ja" && sourceLanguage !== "en") ||
+        sourceLanguage === targetLanguage
+      ) {
+        sourceLanguage = targetLanguage === "ja" ? "en" : "ja";
+      }
+      return [sourceLanguage, targetLanguage];
+    };
+
+    /**
+     * @param {string[]} sourceArray
+     * @param {boolean} isTextTranslation
+     */
+    const getParagraphText = (sourceArray, isTextTranslation) => {
+      const originalText = sourceArray.join("").replace(/\u200b/g, " ");
+      const text = isTextTranslation
+        ? originalText.trim()
+        : originalText.replace(/\s+/g, " ").trim();
+      return { originalText, text };
     };
 
     /** @type {Map<string, Promise<string>>} */
@@ -1760,17 +1972,20 @@ const translationService = (function () {
       );
       let promise = translationsInProgress.get(key);
       if (!promise) {
+        if (queue.length === 0 && requestsInFlight === 0) startedFromIdle = true;
         const maxLength = isTextTranslation ? MAX_TEXT_LENGTH : MAX_BATCH_LENGTH;
         promise = Promise.all(
           splitText(text, maxLength).map(
             (part) =>
               new Promise((resolve, reject) =>
-                queue.push({
+                (isTextTranslation
+                  ? queue.unshift.bind(queue)
+                  : queue.push.bind(queue))({
+                  key,
                   text: part,
                   sourceLanguage,
                   targetLanguage,
                   isTextTranslation,
-                  maxBatchItems: Infinity,
                   resolve,
                   reject,
                 }),
@@ -1811,22 +2026,17 @@ const translationService = (function () {
           dontSortResults = false,
           isTextTranslation = false,
         ) {
-          if (targetLanguage !== "ja" && targetLanguage !== "en") {
-            return sourceArray2d.map(() => []);
-          }
-          if (
-            (sourceLanguage !== "ja" && sourceLanguage !== "en") ||
-            sourceLanguage === targetLanguage
-          ) {
-            sourceLanguage = targetLanguage === "ja" ? "en" : "ja";
-          }
+          const languages = fixLanguages(sourceLanguage, targetLanguage);
+          if (!languages) return sourceArray2d.map(() => []);
+          [sourceLanguage, targetLanguage] = languages;
 
+          pendingLookups++;
           const paragraphs = await Promise.all(
             sourceArray2d.map(async (sourceArray) => {
-              const originalText = sourceArray.join("").replace(/\u200b/g, " ");
-              const text = isTextTranslation
-                ? originalText.trim()
-                : originalText.replace(/\s+/g, " ").trim();
+              const { originalText, text } = getParagraphText(
+                sourceArray,
+                isTextTranslation,
+              );
               const cacheEntry = text
                 ? await translationCache.get(
                     "sarashina",
@@ -1837,12 +2047,14 @@ const translationService = (function () {
                 : null;
               return { sourceArray, originalText, text, cacheEntry };
             }),
-          );
+          ).finally(() => pendingLookups--);
 
           // queue all paragraphs of this call before sending, so they can be packed in the same batch
           const promises = paragraphs.map(
             async ({ sourceArray, originalText, text, cacheEntry }) => {
               if (!text) return sourceArray.map(() => " ");
+              // numbers, symbols and formula fragments: nothing to translate
+              if (!/\p{L}{2}/u.test(text)) return sourceArray;
               let translatedText = cacheEntry?.translatedText;
               if (!translatedText) {
                 translatedText = await enqueue(
@@ -1865,12 +2077,34 @@ const translationService = (function () {
               return sourceArray.map((_, i) => (i === 0 ? translatedText : " "));
             },
           );
-          schedulePump(0);
+          schedulePump(isTextTranslation ? 0 : COALESCE_DELAY);
 
           const results = await Promise.allSettled(promises);
           return results.map((result) =>
             result.status === "fulfilled" ? result.value : [],
           );
+        },
+
+        /**
+         * Moves the queued paragraphs of `sourceArray2d` (usually the ones on screen) to the front of the queue.
+         * @param {string} sourceLanguage
+         * @param {string} targetLanguage
+         * @param {string[][]} sourceArray2d
+         */
+        prioritize(sourceLanguage, targetLanguage, sourceArray2d) {
+          const languages = fixLanguages(sourceLanguage, targetLanguage);
+          if (!languages) return;
+          const keys = new Set(
+            sourceArray2d.map(
+              (sourceArray) =>
+                [
+                  ...languages,
+                  false,
+                  getParagraphText(sourceArray, false).text,
+                ].join(", "),
+            ),
+          );
+          putInFront(queue.filter((item) => keys.has(item.key)));
         },
       })
     );
@@ -2058,6 +2292,15 @@ const translationService = (function () {
         "deepl",
         /** @type {Service} */ /** @type {?} */ (deeplService),
       );
+    } else if (request.action === "prioritizeTranslations") {
+      const service = serviceList.get(request.translationService);
+      if (service?.prioritize) {
+        service.prioritize(
+          request.sourceLanguage,
+          request.targetLanguage,
+          request.sourceArray2d,
+        );
+      }
     } else if (request.action === "createSarashinaService") {
       serviceList.set(
         "sarashina",
