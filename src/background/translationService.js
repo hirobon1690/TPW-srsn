@@ -1544,6 +1544,338 @@ const translationService = (function () {
     })();
   };
 
+  /**
+   * @typedef {Object} SarashinaQueueItem
+   * @property {string} text
+   * @property {string} sourceLanguage
+   * @property {string} targetLanguage
+   * @property {boolean} isTextTranslation Text translations keep their line breaks and are never batched with other items.
+   * @property {number} maxBatchItems Lowered when the result of a batch couldn't be matched to its paragraphs.
+   * @property {(translatedText: string) => void} resolve
+   * @property {(reason?: any) => void} reject
+   */
+
+  /**
+   * Creates the Sarashina translation service (https://docs.sarashina.ai/api-reference/translate).
+   *
+   * The API only translates between ja and en, accepts a single text per request (max 5000 characters)
+   * and is limited to 6 requests per minute. So instead of using the request logic of `Service`,
+   * paragraphs are queued and packed one per line into batches that are sent through a rate limiter.
+   * The newest paragraphs (the ones the user is looking at) and text translations are sent first.
+   * @param {string} apiKey
+   * @returns {Service} sarashinaService
+   */
+  const createSarashinaService = (apiKey) => {
+    const API_URL = "https://api.sarashina.ai/v1/translate";
+    const MAX_TEXT_LENGTH = 5000;
+    // Larger batches are slower (~3.5s per 1000 characters) and the model is more likely to merge or repeat lines.
+    const MAX_BATCH_LENGTH = 3000;
+    const MAX_REQUESTS_PER_MINUTE = 6;
+
+    /** @type {SarashinaQueueItem[]} */
+    const queue = [];
+    /** @type {number[]} */
+    const requestTimes = [];
+    let pausedUntil = 0;
+    let requestsInFlight = 0;
+    let pumpTimeout = null;
+    let keepAliveInterval = null;
+
+    /**
+     * Splits a text longer than `maxLength` at line breaks, sentence ends or spaces.
+     * @param {string} text
+     * @param {number} maxLength
+     * @returns {string[]}
+     */
+    const splitText = (text, maxLength) => {
+      const parts = [];
+      while (text.length > maxLength) {
+        const slice = text.slice(0, maxLength);
+        let index = slice.lastIndexOf("\n");
+        if (index < maxLength / 2) {
+          index = Math.max(
+            slice.lastIndexOf(". "),
+            slice.lastIndexOf("。"),
+            slice.lastIndexOf(" "),
+          );
+        }
+        if (index < maxLength / 2) index = maxLength - 1;
+        parts.push(text.slice(0, index + 1));
+        text = text.slice(index + 1);
+      }
+      parts.push(text);
+      return parts;
+    };
+
+    /**
+     * The service worker may be stopped while requests are waiting for the rate limit.
+     * Calling an extension API resets its idle timer.
+     */
+    const updateKeepAlive = () => {
+      if (queue.length > 0 || requestsInFlight > 0) {
+        if (!keepAliveInterval) {
+          keepAliveInterval = setInterval(
+            () => chrome.runtime.getPlatformInfo(() => checkedLastError()),
+            20000,
+          );
+        }
+      } else if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+      }
+    };
+
+    const schedulePump = (delay) => {
+      clearTimeout(pumpTimeout);
+      pumpTimeout = setTimeout(pump, Math.max(delay, 0));
+    };
+
+    /**
+     * Takes the next batch from the queue: text translations first, then the newest page paragraphs
+     * with the same language pair that fit in `MAX_BATCH_LENGTH`.
+     * @returns {SarashinaQueueItem[]}
+     */
+    const takeBatch = () => {
+      let firstIndex = queue.findIndex((item) => item.isTextTranslation);
+      if (firstIndex === -1) firstIndex = queue.length - 1;
+      const first = queue.splice(firstIndex, 1)[0];
+      const batch = [first];
+      if (first.isTextTranslation) return batch;
+
+      let length = first.text.length;
+      for (let i = queue.length - 1; i >= 0; i--) {
+        const item = queue[i];
+        if (batch.length >= first.maxBatchItems) break;
+        if (
+          item.isTextTranslation ||
+          item.maxBatchItems <= batch.length ||
+          item.sourceLanguage !== first.sourceLanguage ||
+          item.targetLanguage !== first.targetLanguage ||
+          length + 1 + item.text.length > MAX_BATCH_LENGTH
+        )
+          continue;
+        batch.push(item);
+        length += 1 + item.text.length;
+        queue.splice(i, 1);
+      }
+      return batch;
+    };
+
+    const pump = () => {
+      while (queue.length > 0) {
+        const now = Date.now();
+        while (requestTimes.length > 0 && requestTimes[0] <= now - 60000) {
+          requestTimes.shift();
+        }
+        if (pausedUntil > now) {
+          schedulePump(pausedUntil - now);
+          break;
+        }
+        if (requestTimes.length >= MAX_REQUESTS_PER_MINUTE) {
+          schedulePump(requestTimes[0] + 60000 - now + 100);
+          break;
+        }
+        requestTimes.push(now);
+        sendBatch(takeBatch());
+      }
+      updateKeepAlive();
+    };
+
+    /**
+     * @param {SarashinaQueueItem[]} batch
+     */
+    const sendBatch = async (batch) => {
+      requestsInFlight++;
+      try {
+        const response = await fetch(API_URL, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + apiKey,
+          },
+          body: JSON.stringify({
+            text: batch.map((item) => item.text).join("\n"),
+            source_lang: batch[0].sourceLanguage,
+            target_lang: batch[0].targetLanguage,
+          }),
+        });
+
+        if (response.status === 429) {
+          const retryAfter = parseInt(response.headers.get("Retry-After"));
+          pausedUntil = Date.now() + (isNaN(retryAfter) ? 60 : retryAfter) * 1000;
+          queue.push(...batch.reverse());
+          return;
+        }
+        if (!response.ok) {
+          throw new Error(
+            `Sarashina: HTTP ${response.status} ${await response.text()}`,
+          );
+        }
+
+        /** @type {string} */
+        const translatedText = (await response.json()).translated_text;
+        if (batch.length === 1) {
+          // the API ends lines with two spaces (markdown line breaks)
+          batch[0].resolve(translatedText.replace(/[ \t]+\n/g, "\n").trim());
+          return;
+        }
+
+        let lines = translatedText.split("\n").map((line) => line.trim());
+        if (lines.length !== batch.length) {
+          lines = lines.filter((line) => line);
+        }
+        if (lines.length === batch.length) {
+          batch.forEach((item, i) => item.resolve(lines[i]));
+        } else {
+          // The model merged or split some lines, so the result can't be matched to the paragraphs.
+          console.warn(
+            `Sarashina: expected ${batch.length} lines, got ${lines.length}. Retrying in smaller batches.`,
+          );
+          const maxBatchItems = Math.ceil(batch.length / 2);
+          batch.forEach((item) => (item.maxBatchItems = maxBatchItems));
+          queue.push(...batch.reverse());
+        }
+      } catch (e) {
+        console.error(e);
+        batch.forEach((item) => item.reject(e));
+      } finally {
+        requestsInFlight--;
+        schedulePump(0);
+      }
+    };
+
+    /** @type {Map<string, Promise<string>>} */
+    const translationsInProgress = new Map();
+
+    /**
+     * @param {string} text
+     * @param {string} sourceLanguage
+     * @param {string} targetLanguage
+     * @param {boolean} isTextTranslation
+     * @returns {Promise<string>}
+     */
+    const enqueue = (text, sourceLanguage, targetLanguage, isTextTranslation) => {
+      const key = [sourceLanguage, targetLanguage, isTextTranslation, text].join(
+        ", ",
+      );
+      let promise = translationsInProgress.get(key);
+      if (!promise) {
+        const maxLength = isTextTranslation ? MAX_TEXT_LENGTH : MAX_BATCH_LENGTH;
+        promise = Promise.all(
+          splitText(text, maxLength).map(
+            (part) =>
+              new Promise((resolve, reject) =>
+                queue.push({
+                  text: part,
+                  sourceLanguage,
+                  targetLanguage,
+                  isTextTranslation,
+                  maxBatchItems: Infinity,
+                  resolve,
+                  reject,
+                }),
+              ),
+          ),
+        ).then((parts) => parts.join(isTextTranslation ? "\n" : " "));
+        translationsInProgress.set(key, promise);
+        promise.then(
+          () => translationsInProgress.delete(key),
+          () => translationsInProgress.delete(key),
+        );
+      }
+      return promise;
+    };
+
+    return /** @type {Service} */ (
+      /** @type {?} */ ({
+        serviceName: "sarashina",
+
+        removeTranslationsWithError() {},
+
+        /**
+         * The inline fragments of each `sourceArray` are translated together as one paragraph;
+         * the result is placed in the first fragment and the others are replaced with a space.
+         * @param {string} sourceLanguage
+         * @param {string} targetLanguage
+         * @param {string[][]} sourceArray2d
+         * @param {boolean} dontSaveInPersistentCache
+         * @param {boolean} dontSortResults - This parameter is not used
+         * @param {boolean} isTextTranslation - Translations from the text translation UI: keep line breaks and send them first.
+         * @returns {Promise<string[][]>}
+         */
+        async translate(
+          sourceLanguage,
+          targetLanguage,
+          sourceArray2d,
+          dontSaveInPersistentCache = false,
+          dontSortResults = false,
+          isTextTranslation = false,
+        ) {
+          if (targetLanguage !== "ja" && targetLanguage !== "en") {
+            return sourceArray2d.map(() => []);
+          }
+          if (
+            (sourceLanguage !== "ja" && sourceLanguage !== "en") ||
+            sourceLanguage === targetLanguage
+          ) {
+            sourceLanguage = targetLanguage === "ja" ? "en" : "ja";
+          }
+
+          const paragraphs = await Promise.all(
+            sourceArray2d.map(async (sourceArray) => {
+              const originalText = sourceArray.join("").replace(/\u200b/g, " ");
+              const text = isTextTranslation
+                ? originalText.trim()
+                : originalText.replace(/\s+/g, " ").trim();
+              const cacheEntry = text
+                ? await translationCache.get(
+                    "sarashina",
+                    sourceLanguage,
+                    targetLanguage,
+                    originalText,
+                  )
+                : null;
+              return { sourceArray, originalText, text, cacheEntry };
+            }),
+          );
+
+          // queue all paragraphs of this call before sending, so they can be packed in the same batch
+          const promises = paragraphs.map(
+            async ({ sourceArray, originalText, text, cacheEntry }) => {
+              if (!text) return sourceArray.map(() => " ");
+              let translatedText = cacheEntry?.translatedText;
+              if (!translatedText) {
+                translatedText = await enqueue(
+                  text,
+                  sourceLanguage,
+                  targetLanguage,
+                  isTextTranslation,
+                );
+                if (!dontSaveInPersistentCache && translatedText) {
+                  translationCache.set(
+                    "sarashina",
+                    sourceLanguage,
+                    targetLanguage,
+                    originalText,
+                    translatedText,
+                    sourceLanguage,
+                  );
+                }
+              }
+              return sourceArray.map((_, i) => (i === 0 ? translatedText : " "));
+            },
+          );
+          schedulePump(0);
+
+          const results = await Promise.allSettled(promises);
+          return results.map((result) =>
+            result.status === "fulfilled" ? result.value : [],
+          );
+        },
+      })
+    );
+  };
+
   /** @type {Map<string, Service>} */
   const serviceList = new Map();
 
@@ -1614,6 +1946,8 @@ const translationService = (function () {
         targetLanguage,
         sourceArray.map((text) => [text]),
         dontSaveInPersistentCache,
+        false,
+        true,
       )
     ).map((result) => result[0]);
   };
@@ -1637,6 +1971,8 @@ const translationService = (function () {
         targetLanguage,
         [[originalText]],
         dontSaveInPersistentCache,
+        false,
+        true,
       )
     )[0][0];
   };
@@ -1722,6 +2058,13 @@ const translationService = (function () {
         "deepl",
         /** @type {Service} */ /** @type {?} */ (deeplService),
       );
+    } else if (request.action === "createSarashinaService") {
+      serviceList.set(
+        "sarashina",
+        createSarashinaService(request.sarashina.apiKey),
+      );
+    } else if (request.action === "removeSarashinaService") {
+      serviceList.delete("sarashina");
     }
   });
 
@@ -1740,6 +2083,13 @@ const translationService = (function () {
         .get("customServices")
         .find((cs) => cs.name === "deepl_freeapi");
       serviceList.set("deepl", createDeeplFreeApiService(deepl_freeapi.apiKey));
+    }
+
+    const sarashina = twpConfig
+      .get("customServices")
+      .find((cs) => cs.name === "sarashina");
+    if (sarashina) {
+      serviceList.set("sarashina", createSarashinaService(sarashina.apiKey));
     }
 
     const proxyServers = twpConfig.get("proxyServers");
