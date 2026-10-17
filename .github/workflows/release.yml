@@ -46,10 +46,10 @@ jobs:
             --title "TWP-srsn ${{ steps.tag.outputs.tag }}" \
             --notes ""
 
-      - name: Delete the older releases
+      - name: Delete the older releases (their tags are kept)
         run: |
           gh release list --limit 100 --json tagName --jq '.[].tagName' \
             | { grep -vx "${{ steps.tag.outputs.tag }}" || true; } \
             | while read -r tag; do
-                gh release delete "$tag" --yes --cleanup-tag
+                gh release delete "$tag" --yes
               done
