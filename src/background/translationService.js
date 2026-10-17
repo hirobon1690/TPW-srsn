@@ -1691,8 +1691,8 @@ const translationService = (function () {
     // The API limits, configurable in the options page (see `setLimits`)
     let maxRequests = 6;
     let rateLimitWindow = 62000;
-    let maxTextLength = 5000;
-    let maxBatchLength = 4500;
+    let maxTextLength = 4700;
+    let maxBatchLength = 4600;
     // Don't split the remaining paragraphs into batches smaller than this.
     let minSplitLength = 1000;
     // When the page doesn't fit in the free slots, the first batch is kept small so the paragraphs
@@ -1705,16 +1705,21 @@ const translationService = (function () {
     const setLimits = ({
       requestsPerWindow = 6,
       windowSeconds = 60,
-      maxCharacters = 5000,
+      maxCharacters = 4700,
       style = "dearu",
     } = {}) => {
       translationStyle = STYLE_INSTRUCTIONS[style] !== undefined ? style : "dearu";
       maxRequests = Math.max(1, Math.floor(requestsPerWindow) || 6);
       // A request sent exactly 60s after the first one of the window was still rejected.
       rateLimitWindow = Math.max(1, Number(windowSeconds) || 60) * 1000 + 2000;
-      maxTextLength = Math.max(100, Math.floor(maxCharacters) || 5000);
-      // ~3.5s per 1000 characters. Leaves room below maxTextLength for the line breaks.
-      maxBatchLength = Math.floor(maxTextLength * 0.9);
+      maxTextLength = Math.max(100, Math.floor(maxCharacters) || 4700);
+      // Paragraphs are packed up to the limit, leaving room for the style instruction and its line
+      // break (the line breaks between paragraphs are counted when packing).
+      const instructionLength = STYLE_INSTRUCTIONS[translationStyle].length;
+      maxBatchLength = Math.max(
+        50,
+        maxTextLength - (instructionLength ? instructionLength + 1 : 0),
+      );
       minSplitLength = Math.min(1000, maxBatchLength);
       firstBatchLength = Math.min(1500, maxBatchLength);
     };

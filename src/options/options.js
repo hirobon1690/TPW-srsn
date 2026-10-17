@@ -1512,7 +1512,7 @@ twpConfig
     const sarashinaLimitInputs = {
       requestsPerWindow: ["#sarashinaRequests", 6, 1],
       windowSeconds: ["#sarashinaWindow", 60, 1],
-      maxCharacters: ["#sarashinaMaxChars", 5000, 100],
+      maxCharacters: ["#sarashinaMaxChars", 4700, 100],
     };
 
     function readSarashinaLimits() {
