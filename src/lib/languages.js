@@ -12342,6 +12342,7 @@ const twpLang = (function () {
       "uk",
       "zh-CN",
     ],
+    sarashina: ["en", "ja"],
   };
 
   twpLang.UILanguages = Object.keys(allLanguagesNames);
@@ -12362,7 +12363,7 @@ const twpLang = (function () {
 
   /** @type {Map<string, string>} */
   const alternatives = new Map();
-  const pageTranslationServices = ["google", "bing", "yandex"];
+  const pageTranslationServices = ["google", "bing", "yandex", "sarashina"];
   /**
    * gets an alternate translation service if the selected translation service does not support the current target language.
    * @param {string} lang

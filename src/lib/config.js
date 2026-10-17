@@ -10,8 +10,8 @@ const twpConfig = (function () {
    */
   const defaultConfig = {
     uiLanguage: "default",
-    pageTranslatorService: "google", // google yandex bing
-    textTranslatorService: "google", // google yandex bing deepl
+    pageTranslatorService: "google", // google yandex bing sarashina
+    textTranslatorService: "google", // google yandex bing deepl libre sarashina
     textToSpeechService: "google", // google bing
     enabledServices: ["google", "bing", "yandex", "deepl"],
     ttsSpeed: 1.0,
@@ -551,6 +551,9 @@ const twpConfig = (function () {
     const pageEnabledServices = twpConfig
       .get("enabledServices")
       .filter((svName) => pageTranslationServices.includes(svName));
+    if (twpConfig.get("customServices").find((cs) => cs.name === "sarashina")) {
+      pageEnabledServices.push("sarashina");
+    }
     const index = pageEnabledServices.indexOf(
       twpConfig.get("pageTranslatorService")
     );
