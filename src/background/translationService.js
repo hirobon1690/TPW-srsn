@@ -1653,27 +1653,48 @@ const translationService = (function () {
    *
    * The page translator sends the whole page, ordered by distance from the viewport. When the remaining
    * paragraphs fit in the free request slots, they are split evenly between them and sent in parallel;
-   * otherwise each request is filled up to `MAX_BATCH_LENGTH`. One slot is kept for text translations.
+   * otherwise each request is filled up to `maxBatchLength`. One slot is kept for text translations.
    * @param {string} apiKey
+   * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number}} limits
    * @returns {Service} sarashinaService
    */
-  const createSarashinaService = (apiKey) => {
+  const createSarashinaService = (apiKey, limits = {}) => {
     const API_URL = "https://api.sarashina.ai/v1/translate";
-    const MAX_TEXT_LENGTH = 5000;
-    // ~3.5s per 1000 characters. Leaves room below MAX_TEXT_LENGTH for the line breaks.
-    const MAX_BATCH_LENGTH = 4500;
-    // Don't split the remaining paragraphs into batches smaller than this.
-    const MIN_SPLIT_LENGTH = 1000;
-    // When the page doesn't fit in the free slots, the first batch is kept small so the paragraphs
-    // on screen are shown in a few seconds.
-    const FIRST_BATCH_LENGTH = 1500;
-    const MAX_REQUESTS_PER_MINUTE = 6;
-    // A request sent exactly 60s after the first one of the window was still rejected.
-    const RATE_LIMIT_WINDOW = 62000;
-    // Request slots that page translation leaves free for text translations.
-    const RESERVED_FOR_TEXT_TRANSLATION = 1;
     // Wait for the other messages of the same burst before planning the batches.
     const COALESCE_DELAY = 300;
+
+    // The API limits, configurable in the options page (see `setLimits`)
+    let maxRequests = 6;
+    let rateLimitWindow = 62000;
+    let maxTextLength = 5000;
+    let maxBatchLength = 4500;
+    // Request slots that page translation leaves free for text translations.
+    let reservedForTextTranslation = 1;
+    // Don't split the remaining paragraphs into batches smaller than this.
+    let minSplitLength = 1000;
+    // When the page doesn't fit in the free slots, the first batch is kept small so the paragraphs
+    // on screen are shown in a few seconds.
+    let firstBatchLength = 1500;
+
+    /**
+     * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number}} limits
+     */
+    const setLimits = ({
+      requestsPerWindow = 6,
+      windowSeconds = 60,
+      maxCharacters = 5000,
+    } = {}) => {
+      maxRequests = Math.max(1, Math.floor(requestsPerWindow) || 6);
+      // A request sent exactly 60s after the first one of the window was still rejected.
+      rateLimitWindow = Math.max(1, Number(windowSeconds) || 60) * 1000 + 2000;
+      maxTextLength = Math.max(100, Math.floor(maxCharacters) || 5000);
+      // ~3.5s per 1000 characters. Leaves room below maxTextLength for the line breaks.
+      maxBatchLength = Math.floor(maxTextLength * 0.9);
+      reservedForTextTranslation = maxRequests > 1 ? 1 : 0;
+      minSplitLength = Math.min(1000, maxBatchLength);
+      firstBatchLength = Math.min(1500, maxBatchLength);
+    };
+    setLimits(limits);
 
     /** @type {SarashinaQueueItem[]} */
     let queue = [];
@@ -1768,23 +1789,23 @@ const translationService = (function () {
         0,
       );
 
-      let targetLength = MAX_BATCH_LENGTH;
-      if (totalLength <= slots * MAX_BATCH_LENGTH) {
+      let targetLength = maxBatchLength;
+      if (totalLength <= slots * maxBatchLength) {
         // Everything fits: split it evenly so the requests finish at about the same time.
         // If one slot can be spared, keep it for content added to the page later.
         const usableSlots =
-          slots > 1 && totalLength <= (slots - 1) * MAX_BATCH_LENGTH
+          slots > 1 && totalLength <= (slots - 1) * maxBatchLength
             ? slots - 1
             : slots;
         const batchCount = Math.min(
           usableSlots,
-          Math.max(1, Math.ceil(totalLength / MIN_SPLIT_LENGTH)),
+          Math.max(1, Math.ceil(totalLength / minSplitLength)),
         );
         targetLength = Math.ceil(totalLength / batchCount);
       }
 
       const keepFirstBatchSmall =
-        totalLength > slots * MAX_BATCH_LENGTH && startedFromIdle;
+        totalLength > slots * maxBatchLength && startedFromIdle;
       startedFromIdle = false;
 
       const batches = [];
@@ -1792,7 +1813,7 @@ const translationService = (function () {
       while (batches.length < slots && index < candidates.length) {
         const batchTargetLength =
           batches.length === 0 && keepFirstBatchSmall
-            ? Math.min(targetLength, FIRST_BATCH_LENGTH)
+            ? Math.min(targetLength, firstBatchLength)
             : targetLength;
         const batch = [];
         let length = 0;
@@ -1800,7 +1821,7 @@ const translationService = (function () {
           const item = candidates[index];
           if (
             batch.length > 0 &&
-            (length + item.text.length + 1 > MAX_BATCH_LENGTH ||
+            (length + item.text.length + 1 > maxBatchLength ||
               length >= batchTargetLength)
           )
             break;
@@ -1820,7 +1841,7 @@ const translationService = (function () {
       const now = Date.now();
       while (
         requestTimes.length > 0 &&
-        requestTimes[0] <= now - RATE_LIMIT_WINDOW
+        requestTimes[0] <= now - rateLimitWindow
       ) {
         requestTimes.shift();
       }
@@ -1830,7 +1851,7 @@ const translationService = (function () {
       } else if (queue.length > 0 && pausedUntil > now) {
         schedulePump(pausedUntil - now);
       } else if (queue.length > 0) {
-        let freeSlots = MAX_REQUESTS_PER_MINUTE - requestTimes.length;
+        let freeSlots = maxRequests - requestTimes.length;
 
         while (freeSlots > 0 && queue[0]?.isTextTranslation) {
           requestTimes.push(now);
@@ -1838,7 +1859,7 @@ const translationService = (function () {
           freeSlots--;
         }
 
-        const pageSlots = freeSlots - RESERVED_FOR_TEXT_TRANSLATION;
+        const pageSlots = freeSlots - reservedForTextTranslation;
         if (pageSlots > 0) {
           for (const batch of planPageBatches(pageSlots)) {
             requestTimes.push(now);
@@ -1848,7 +1869,7 @@ const translationService = (function () {
 
         if (queue.length > 0 && requestTimes.length > 0) {
           // wait for the next free slot
-          schedulePump(requestTimes[0] + RATE_LIMIT_WINDOW - now + 100);
+          schedulePump(requestTimes[0] + rateLimitWindow - now + 100);
         }
       }
       updateKeepAlive();
@@ -1973,7 +1994,7 @@ const translationService = (function () {
       let promise = translationsInProgress.get(key);
       if (!promise) {
         if (queue.length === 0 && requestsInFlight === 0) startedFromIdle = true;
-        const maxLength = isTextTranslation ? MAX_TEXT_LENGTH : MAX_BATCH_LENGTH;
+        const maxLength = isTextTranslation ? maxTextLength : maxBatchLength;
         promise = Promise.all(
           splitText(text, maxLength).map(
             (part) =>
@@ -2007,6 +2028,8 @@ const translationService = (function () {
 
         removeTranslationsWithError() {},
 
+        setLimits,
+
         /**
          * Drops every queued paragraph, of all tabs. Requests already sent are not affected.
          */
@@ -2023,20 +2046,20 @@ const translationService = (function () {
         getStatus() {
           const now = Date.now();
           const recentRequests = requestTimes.filter(
-            (time) => time > now - RATE_LIMIT_WINDOW,
+            (time) => time > now - rateLimitWindow,
           );
-          const freeSlots = MAX_REQUESTS_PER_MINUTE - recentRequests.length;
+          const freeSlots = maxRequests - recentRequests.length;
           const queuedLength = queue.reduce(
             (total, item) => total + item.text.length,
             0,
           );
           // page translation can't use the slot kept for text translations
-          const slotsToWaitFor = RESERVED_FOR_TEXT_TRANSLATION + 1 - freeSlots;
+          const slotsToWaitFor = reservedForTextTranslation + 1 - freeSlots;
           const nextSlotIn =
             slotsToWaitFor > 0
               ? Math.max(
                   0,
-                  recentRequests[slotsToWaitFor - 1] + RATE_LIMIT_WINDOW - now,
+                  recentRequests[slotsToWaitFor - 1] + rateLimitWindow - now,
                 )
               : 0;
           const pausedFor = Math.max(0, pausedUntil - now);
@@ -2045,11 +2068,11 @@ const translationService = (function () {
           let estimatedTime = 0;
           if (queuedLength > 0) {
             const lengthPerWindow =
-              (MAX_REQUESTS_PER_MINUTE - RESERVED_FOR_TEXT_TRANSLATION) *
-              MAX_BATCH_LENGTH;
+              (maxRequests - reservedForTextTranslation) *
+              maxBatchLength;
             estimatedTime =
               Math.max(nextSlotIn, pausedFor) +
-              (Math.ceil(queuedLength / lengthPerWindow) - 1) * RATE_LIMIT_WINDOW +
+              (Math.ceil(queuedLength / lengthPerWindow) - 1) * rateLimitWindow +
               15000;
           } else if (requestsInFlight > 0) {
             estimatedTime = 15000;
@@ -2060,7 +2083,8 @@ const translationService = (function () {
             queuedLength,
             requestsInFlight,
             freeSlots,
-            maxSlots: MAX_REQUESTS_PER_MINUTE,
+            maxSlots: maxRequests,
+            windowSeconds: Math.round((rateLimitWindow - 2000) / 1000),
             nextSlotIn,
             pausedFor,
             estimatedTime,
@@ -2352,6 +2376,8 @@ const translationService = (function () {
         "deepl",
         /** @type {Service} */ /** @type {?} */ (deeplService),
       );
+    } else if (request.action === "updateSarashinaLimits") {
+      serviceList.get("sarashina")?.setLimits(request.limits);
     } else if (request.action === "clearSarashinaQueue") {
       serviceList.get("sarashina")?.clearQueue();
       sendResponse();
@@ -2369,7 +2395,7 @@ const translationService = (function () {
     } else if (request.action === "createSarashinaService") {
       serviceList.set(
         "sarashina",
-        createSarashinaService(request.sarashina.apiKey),
+        createSarashinaService(request.sarashina.apiKey, request.sarashina),
       );
     } else if (request.action === "removeSarashinaService") {
       serviceList.delete("sarashina");
@@ -2397,7 +2423,10 @@ const translationService = (function () {
       .get("customServices")
       .find((cs) => cs.name === "sarashina");
     if (sarashina) {
-      serviceList.set("sarashina", createSarashinaService(sarashina.apiKey));
+      serviceList.set(
+        "sarashina",
+        createSarashinaService(sarashina.apiKey, sarashina),
+      );
     }
 
     const proxyServers = twpConfig.get("proxyServers");

@@ -606,7 +606,7 @@
         <hr>
         <div>
           <h3>Configure a Sarashina API key to translate pages and text between Japanese and English.</h3>
-          <p>The Sarashina API allows only 6 requests per minute, so pages are translated gradually as you scroll.</p>
+          <p>The Sarashina API has a rate limit (by default 6 requests per minute and 5000 characters per request), so long pages take a few minutes to translate.</p>
           <label for="sarashinaKEY">Your API key</label><br>
           <input type="text" id="sarashinaKEY" placeholder="hki_v1_..." style="width: 90%;"
             autocomplete="off" spellcheck="false"><br>
@@ -614,6 +614,16 @@
           <button id="addSarashina">Add Sarashina API</button>
           <button id="removeSarashina">Remove Sarashina API</button>
           <p id="sarashinaApiResponse"></p>
+          <h4>API limits</h4>
+          <p>Change these only if the limits of the API change. They are applied right away.</p>
+          <label for="sarashinaRequests">Requests per window</label><br>
+          <input type="number" id="sarashinaRequests" min="1" step="1" value="6" style="width: 8em;"><br>
+          <label for="sarashinaWindow">Window length (seconds)</label><br>
+          <input type="number" id="sarashinaWindow" min="1" step="1" value="60" style="width: 8em;"><br>
+          <label for="sarashinaMaxChars">Max characters per request</label><br>
+          <input type="number" id="sarashinaMaxChars" min="100" step="100" value="5000" style="width: 8em;"><br>
+          <br>
+          <button id="resetSarashinaLimits">Reset to defaults</button>
         </div>
         <hr>
         <div>

@@ -1508,10 +1508,55 @@ twpConfig
       };
     }
 
+    // API limits: [input, default, minimum]
+    const sarashinaLimitInputs = {
+      requestsPerWindow: ["#sarashinaRequests", 6, 1],
+      windowSeconds: ["#sarashinaWindow", 60, 1],
+      maxCharacters: ["#sarashinaMaxChars", 5000, 100],
+    };
+
+    function readSarashinaLimits() {
+      const limits = {};
+      for (const [name, [selector, defaultValue, minimum]] of Object.entries(
+        sarashinaLimitInputs
+      )) {
+        const value = Math.floor(Number($(selector).value));
+        limits[name] = value >= minimum ? value : defaultValue;
+        $(selector).value = limits[name];
+      }
+      return limits;
+    }
+
+    function saveSarashinaLimits() {
+      const limits = readSarashinaLimits();
+      const customServices = twpConfig.get("customServices");
+      const sarashina = customServices.find((cs) => cs.name === "sarashina");
+      if (sarashina) {
+        Object.assign(sarashina, limits);
+        twpConfig.set("customServices", customServices);
+        chrome.runtime.sendMessage(
+          { action: "updateSarashinaLimits", limits },
+          checkedLastError
+        );
+      }
+    }
+
+    Object.values(sarashinaLimitInputs).forEach(([selector]) => {
+      $(selector).onchange = saveSarashinaLimits;
+    });
+
+    $("#resetSarashinaLimits").onclick = () => {
+      Object.values(sarashinaLimitInputs).forEach(([selector, defaultValue]) => {
+        $(selector).value = defaultValue;
+      });
+      saveSarashinaLimits();
+    };
+
     $("#addSarashina").onclick = async () => {
       const sarashina = {
         name: "sarashina",
         apiKey: $("#sarashinaKEY").value.trim(),
+        ...readSarashinaLimits(),
       };
       try {
         const response = await testSarashinaApiKey(sarashina.apiKey);
@@ -1584,6 +1629,11 @@ twpConfig
       .find((cs) => cs.name === "sarashina");
     if (sarashina) {
       $("#sarashinaKEY").value = sarashina.apiKey;
+      for (const [name, [selector, defaultValue]] of Object.entries(
+        sarashinaLimitInputs
+      )) {
+        $(selector).value = sarashina[name] ?? defaultValue;
+      }
     }
 
     $("#showMobilePopupOnDesktop").onchange = (e) => {

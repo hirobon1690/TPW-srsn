@@ -652,13 +652,16 @@
     }
   },
   "msgSarashinaSlots": {
-    "message": "送信枠: 1 分あたり $MAX$ 件中 $FREE$ 件が空き",
+    "message": "送信枠: $WINDOW$ 秒あたり $MAX$ 件中 $FREE$ 件が空き",
     "placeholders": {
       "FREE": {
         "content": "$1"
       },
       "MAX": {
         "content": "$2"
+      },
+      "WINDOW": {
+        "content": "$3"
       }
     }
   },

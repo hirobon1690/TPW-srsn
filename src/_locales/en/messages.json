@@ -652,13 +652,16 @@
     }
   },
   "msgSarashinaSlots": {
-    "message": "Free requests: $FREE$ of $MAX$ per minute",
+    "message": "Free requests: $FREE$ of $MAX$ per $WINDOW$ s",
     "placeholders": {
       "FREE": {
         "content": "$1"
       },
       "MAX": {
         "content": "$2"
+      },
+      "WINDOW": {
+        "content": "$3"
       }
     }
   },

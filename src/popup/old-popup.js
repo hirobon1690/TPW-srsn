@@ -358,6 +358,7 @@ twpConfig
                   twpI18n.getMessage("msgSarashinaSlots", [
                     String(queueStatus.freeSlots),
                     String(queueStatus.maxSlots),
+                    String(queueStatus.windowSeconds),
                   ])
                 );
                 sarashinaStatus.textContent = "";
