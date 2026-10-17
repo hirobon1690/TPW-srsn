@@ -1206,6 +1206,9 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
   let windowIsInFocus = true;
   window.addEventListener("focus", function (e) {
     windowIsInFocus = true;
+    // After the extension is reloaded, the scripts left in open tabs can't send messages anymore
+    // ("Extension context invalidated")
+    if (!chrome.runtime?.id) return;
     chrome.runtime.sendMessage(
       { action: "thisFrameIsInFocus" },
       checkedLastError
