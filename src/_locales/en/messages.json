@@ -661,5 +661,11 @@
         "content": "$2"
       }
     }
+  },
+  "btnSarashinaRestart": {
+    "message": "Clear the queue and restart this page"
+  },
+  "btnSarashinaRestartTitle": {
+    "message": "Drops the paragraphs waiting to be sent, including the ones of other tabs, and sends the untranslated paragraphs of this page first"
   }
 }

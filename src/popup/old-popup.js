@@ -267,6 +267,24 @@ twpConfig
 
     // Sarashina allows only 6 requests per minute, so a long page takes a while: show the progress
     const sarashinaStatus = document.getElementById("sarashinaStatus");
+    const btnSarashinaRestart = document.getElementById("btnSarashinaRestart");
+    // drops the whole queue (of all tabs) and sends again the paragraphs of this page that are still waiting
+    btnSarashinaRestart.onclick = () => {
+      chrome.runtime.sendMessage({ action: "clearSarashinaQueue" }, () => {
+        checkedLastError();
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+          chrome.tabs.sendMessage(
+            tabs[0].id,
+            { action: "restartSarashinaTranslation" },
+            { frameId: 0 },
+            () => {
+              checkedLastError();
+              updateSarashinaStatus();
+            }
+          );
+        });
+      });
+    };
     function updateSarashinaStatus() {
       if (
         currentPageTranslatorService !== "sarashina" ||
@@ -274,8 +292,10 @@ twpConfig
         showSelectTargetLanguage
       ) {
         sarashinaStatus.style.display = "none";
+        btnSarashinaRestart.style.display = "none";
         return;
       }
+      btnSarashinaRestart.style.display = "inline-block";
       chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
         chrome.tabs.sendMessage(
           tabs[0].id,

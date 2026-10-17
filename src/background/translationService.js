@@ -2008,6 +2008,16 @@ const translationService = (function () {
         removeTranslationsWithError() {},
 
         /**
+         * Drops every queued paragraph, of all tabs. Requests already sent are not affected.
+         */
+        clearQueue() {
+          const items = queue;
+          queue = [];
+          items.forEach((item) => item.reject(new Error("Sarashina: queue cleared")));
+          updateKeepAlive();
+        },
+
+        /**
          * State of the queue and the rate limit, shown in the popup.
          */
         getStatus() {
@@ -2342,6 +2352,9 @@ const translationService = (function () {
         "deepl",
         /** @type {Service} */ /** @type {?} */ (deeplService),
       );
+    } else if (request.action === "clearSarashinaQueue") {
+      serviceList.get("sarashina")?.clearQueue();
+      sendResponse();
     } else if (request.action === "getSarashinaStatus") {
       sendResponse(serviceList.get("sarashina")?.getStatus() || null);
     } else if (request.action === "prioritizeTranslations") {

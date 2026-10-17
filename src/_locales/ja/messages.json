@@ -661,5 +661,11 @@
         "content": "$2"
       }
     }
+  },
+  "btnSarashinaRestart": {
+    "message": "キューを消してこのページを再開"
+  },
+  "btnSarashinaRestartTitle": {
+    "message": "ほかのタブの分も含めて送信待ちの段落をすべて取り消し、このページのまだ翻訳されていない段落から送り直します"
   }
 }

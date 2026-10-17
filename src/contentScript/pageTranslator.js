@@ -387,6 +387,8 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
   let piecesToTranslate = [];
   // paragraphs (text blocks) sent to Sarashina and translated, shown in the popup
   let sarashinaProgress = { total: 0, done: 0 };
+  // incremented when the translation is restarted from the popup: older requests are ignored
+  let sarashinaGeneration = 0;
   let originalTabLanguage = "und";
   let currentPageLanguage = "und";
   let pageLanguageState = "original";
@@ -1024,6 +1026,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
           .join(sarashinaSeparator),
       ];
       unit.distance = Math.min(...unit.pieces.map(distanceFromScreen));
+      unit.generation = sarashinaGeneration;
       unit.pieces.forEach((ptt) => {
         ptt.isTranslated = true;
         ptt.sarashinaUnit = unit;
@@ -1060,6 +1063,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
         group.map((unit) => unit.sourceArray),
         dontSortResults
       ).then((results) => {
+        if (group[0].generation !== sarashinaGeneration) return;
         group.forEach((unit) => (unit.isWaitingTranslation = false));
         if (currentFooCount === fooCount) sarashinaProgress.done += group.length;
         if (
@@ -1435,6 +1439,19 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
       sendResponse(currentPageTranslatorService);
     } else if (request.action === "getSarashinaPageStatus") {
       sendResponse(sarashinaProgress);
+    } else if (request.action === "restartSarashinaTranslation") {
+      // the background queue was cleared: send the paragraphs still waiting again, nearest first
+      sarashinaGeneration++;
+      const waitingUnits = new Set();
+      piecesToTranslate.forEach((ptt) => {
+        if (ptt.sarashinaUnit?.isWaitingTranslation) {
+          waitingUnits.add(ptt.sarashinaUnit);
+          ptt.isTranslated = false;
+          ptt.sarashinaUnit = null;
+        }
+      });
+      sarashinaProgress.total -= waitingUnits.size;
+      sendResponse(waitingUnits.size);
     } else if (request.action === "swapTranslationService") {
       pageTranslator.swapTranslationService(request.newServiceName);
     } else if (request.action === "toggle-translation") {
