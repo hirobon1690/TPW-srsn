@@ -34,9 +34,18 @@ jobs:
         run: |
           version=$(jq -r .version src/manifest.json)
           # Tags remain after older releases are deleted, so choose the next number from tags.
-          last=$(git ls-remote --refs --tags origin "v${version}-srsn.*" \
-            | sed -n "s#.*refs/tags/v${version//./\\.}-srsn\.\([0-9][0-9]*\)$#\1#p" | sort -n | tail -1)
-          echo "tag=v${version}-srsn.$(( ${last:-0} + 1 ))" >> "$GITHUB_OUTPUT"
+          tag_refs=$(git ls-remote --refs --tags origin "v${version}-srsn.*")
+          last=$(printf '%s\n' "$tag_refs" | awk -F/ -v prefix="v${version}-srsn." '
+            {
+              tag = $NF
+              if (substr(tag, 1, length(prefix)) == prefix) {
+                number = substr(tag, length(prefix) + 1)
+                if (number ~ /^[0-9]+$/ && number + 0 > last) last = number + 0
+              }
+            }
+            END { print last + 0 }
+          ')
+          echo "tag=v${version}-srsn.$(( last + 1 ))" >> "$GITHUB_OUTPUT"
 
       - name: Publish the release
         run: |
