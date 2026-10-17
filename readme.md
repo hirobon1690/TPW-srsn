@@ -1,6 +1,6 @@
 # <img src="https://github.com/FilipePS/Traduzir-paginas-web/blob/master/src/icons/icon-128.png" height="50"> TWP-srsn
 
-[FilipePS/Traduzir-paginas-web](https://github.com/FilipePS/Traduzir-paginas-web)（通称「TWP」）の Chrome MV3 版をベースにした、非公式のフォークです。
+[FilipePS/Traduzir-paginas-web](https://github.com/FilipePS/Traduzir-paginas-web) の Chrome MV3 版をベースにした、非公式のフォークです。
 
 ## このフォークについて
 
