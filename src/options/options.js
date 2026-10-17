@@ -1112,6 +1112,12 @@ twpConfig
       // }
 
       const updateServiceSelector = (enabledServices) => {
+        enabledServices = [...enabledServices];
+        if (
+          twpConfig.get("customServices").find((cs) => cs.name === "sarashina")
+        ) {
+          enabledServices.push("sarashina");
+        }
         document
           .querySelectorAll("#pageTranslatorService option")
           .forEach((option) => option.setAttribute("hidden", ""));
@@ -1163,13 +1169,17 @@ twpConfig
             }
           });
 
+          const isCustomService = (svName) =>
+            twpConfig.get("customServices").find((cs) => cs.name === svName);
           if (
-            !enabledServices.includes(twpConfig.get("textTranslatorService"))
+            !enabledServices.includes(twpConfig.get("textTranslatorService")) &&
+            !isCustomService(twpConfig.get("textTranslatorService"))
           ) {
             twpConfig.set("textTranslatorService", enabledServices[0]);
           }
           if (
-            !enabledServices.includes(twpConfig.get("pageTranslatorService"))
+            !enabledServices.includes(twpConfig.get("pageTranslatorService")) &&
+            !isCustomService(twpConfig.get("pageTranslatorService"))
           ) {
             twpConfig.set("pageTranslatorService", enabledServices[0]);
           }
@@ -1202,6 +1212,12 @@ twpConfig
             : true;
 
         updateServiceSelector(twpConfig.get("enabledServices"));
+      });
+
+      twpConfig.onChanged((name) => {
+        if (name === "customServices") {
+          updateServiceSelector(twpConfig.get("enabledServices"));
+        }
       });
     }
 
@@ -1470,6 +1486,104 @@ twpConfig
       testDeepLFreeApiKey(deepl_freeapi.apiKey).then((response) => {
         $("#deeplApiResponse").textContent = JSON.stringify(response);
       });
+    }
+
+    async function testSarashinaApiKey(apiKey) {
+      const response = await fetch("https://api.sarashina.ai/v1/translate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + apiKey,
+        },
+        body: JSON.stringify({
+          text: "Hello",
+          source_lang: "en",
+          target_lang: "ja",
+        }),
+      });
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: await response.text(),
+      };
+    }
+
+    $("#addSarashina").onclick = async () => {
+      const sarashina = {
+        name: "sarashina",
+        apiKey: $("#sarashinaKEY").value.trim(),
+      };
+      try {
+        const response = await testSarashinaApiKey(sarashina.apiKey);
+        $("#sarashinaApiResponse").textContent =
+          `HTTP ${response.status} ${response.body}`;
+        if (response.ok) {
+          const customServices = twpConfig.get("customServices");
+
+          const index = customServices.findIndex(
+            (cs) => cs.name === "sarashina"
+          );
+          if (index !== -1) {
+            customServices.splice(index, 1);
+          }
+
+          customServices.push(sarashina);
+          twpConfig.set("customServices", customServices);
+          chrome.runtime.sendMessage({
+            action: "createSarashinaService",
+            sarashina,
+          });
+        } else {
+          alert("Invalid API key");
+        }
+      } catch (e) {
+        alert(e);
+      }
+    };
+
+    $("#removeSarashina").onclick = () => {
+      const customServices = twpConfig.get("customServices");
+      const index = customServices.findIndex((cs) => cs.name === "sarashina");
+      if (index !== -1) {
+        customServices.splice(index, 1);
+        twpConfig.set("customServices", customServices);
+        chrome.runtime.sendMessage(
+          { action: "removeSarashinaService" },
+          checkedLastError
+        );
+      }
+
+      const enabledServices = twpConfig.get("enabledServices");
+      if (twpConfig.get("textTranslatorService") === "sarashina") {
+        twpConfig.set("textTranslatorService", enabledServices[0]);
+        $("#textTranslatorService").value = enabledServices[0];
+      }
+      if (twpConfig.get("pageTranslatorService") === "sarashina") {
+        const pageService =
+          enabledServices.find((svName) =>
+            ["google", "bing", "yandex"].includes(svName)
+          ) || "google";
+        twpConfig.set("pageTranslatorService", pageService);
+        $("#pageTranslatorService").value = pageService;
+        chrome.runtime.sendMessage(
+          {
+            action: "restorePagesWithServiceNames",
+            serviceNames: ["sarashina"],
+            newServiceName: pageService,
+          },
+          checkedLastError
+        );
+      }
+
+      $("#sarashinaKEY").value = "";
+      $("#sarashinaApiResponse").textContent = "";
+    };
+
+    const sarashina = twpConfig
+      .get("customServices")
+      .find((cs) => cs.name === "sarashina");
+    if (sarashina) {
+      $("#sarashinaKEY").value = sarashina.apiKey;
     }
 
     $("#showMobilePopupOnDesktop").onchange = (e) => {
