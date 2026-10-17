@@ -1488,8 +1488,10 @@ twpConfig
       });
     }
 
-    async function testSarashinaApiKey(apiKey) {
-      const response = await fetch("https://api.sarashina.ai/v1/translate", {
+    const defaultSarashinaEndpoint = "https://api.sarashina.ai/v1/translate";
+
+    async function testSarashinaApiKey(apiKey, endpointUrl) {
+      const response = await fetch(endpointUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1527,8 +1529,35 @@ twpConfig
       return limits;
     }
 
+    function readSarashinaEndpoint() {
+      const input = $("#sarashinaEndpoint");
+      const value = input.value.trim();
+      let endpointUrl;
+      try {
+        endpointUrl = new URL(value);
+      } catch (_) {
+        input.setCustomValidity("有効なエンドポイント URL を入力してください。");
+        input.reportValidity();
+        return null;
+      }
+      if (!["http:", "https:"].includes(endpointUrl.protocol)) {
+        input.setCustomValidity("http または https の URL を入力してください。");
+        input.reportValidity();
+        return null;
+      }
+      input.setCustomValidity("");
+      input.value = endpointUrl.href;
+      return endpointUrl.href;
+    }
+
     function saveSarashinaLimits() {
-      const limits = { ...readSarashinaLimits(), style: $("#sarashinaStyle").value };
+      const endpointUrl = readSarashinaEndpoint();
+      if (!endpointUrl) return;
+      const limits = {
+        ...readSarashinaLimits(),
+        style: $("#sarashinaStyle").value,
+        endpointUrl,
+      };
       const customServices = twpConfig.get("customServices");
       const sarashina = customServices.find((cs) => cs.name === "sarashina");
       if (sarashina) {
@@ -1545,26 +1574,33 @@ twpConfig
       $(selector).onchange = saveSarashinaLimits;
     });
     $("#sarashinaStyle").onchange = saveSarashinaLimits;
+    $("#sarashinaEndpoint").oninput = () =>
+      $("#sarashinaEndpoint").setCustomValidity("");
+    $("#sarashinaEndpoint").onchange = saveSarashinaLimits;
 
     $("#resetSarashinaLimits").onclick = () => {
       Object.values(sarashinaLimitInputs).forEach(([selector, defaultValue]) => {
         $(selector).value = defaultValue;
       });
       $("#sarashinaStyle").value = "dearu";
+      $("#sarashinaEndpoint").value = defaultSarashinaEndpoint;
       saveSarashinaLimits();
     };
 
     $("#addSarashina").onclick = async () => {
+      const endpointUrl = readSarashinaEndpoint();
+      if (!endpointUrl) return;
       const sarashina = {
         name: "sarashina",
         apiKey: $("#sarashinaKEY").value.trim(),
         ...readSarashinaLimits(),
         style: $("#sarashinaStyle").value,
+        endpointUrl,
       };
       try {
-        const response = await testSarashinaApiKey(sarashina.apiKey);
+        const response = await testSarashinaApiKey(sarashina.apiKey, endpointUrl);
         $("#sarashinaApiResponse").textContent =
-          `HTTP ${response.status} ${response.body}`;
+          `接続確認: HTTP ${response.status} ${response.body}`;
         if (response.ok) {
           const customServices = twpConfig.get("customServices");
 
@@ -1581,11 +1617,17 @@ twpConfig
             action: "createSarashinaService",
             sarashina,
           });
+          if (index === -1) {
+            twpConfig.set("pageTranslatorService", "sarashina");
+            twpConfig.set("textTranslatorService", "sarashina");
+            $("#pageTranslatorService").value = "sarashina";
+            $("#textTranslatorService").value = "sarashina";
+          }
         } else {
-          alert("Invalid API key");
+          alert("APIキーが無効です。");
         }
       } catch (e) {
-        alert(e);
+        alert(`Sarashina API への接続に失敗しました: ${e}`);
       }
     };
 
@@ -1638,6 +1680,8 @@ twpConfig
         $(selector).value = sarashina[name] ?? defaultValue;
       }
       $("#sarashinaStyle").value = sarashina.style ?? "dearu";
+      $("#sarashinaEndpoint").value =
+        sarashina.endpointUrl ?? defaultSarashinaEndpoint;
     }
 
     $("#showMobilePopupOnDesktop").onchange = (e) => {

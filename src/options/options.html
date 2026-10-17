@@ -580,32 +580,35 @@
 
       <div id="experimental" class="w3-container">
         <div>
-          <h3>Sarashina Config</h3>
-          <p>The Sarashina API has a rate limit (by default 6 requests per minute and 5000 characters per request), so long pages take a few minutes to translate.</p>
-          <label for="sarashinaKEY">Your API key</label><br>
+          <h3>Sarashina の設定</h3>
+          <label for="sarashinaKEY">APIキー</label><br>
           <input type="text" id="sarashinaKEY" placeholder="hki_v1_..." style="width: 90%;"
             autocomplete="off" spellcheck="false"><br>
           <br>
-          <button id="addSarashina">Add Sarashina API</button>
-          <button id="removeSarashina">Remove Sarashina API</button>
+          <button id="addSarashina">Sarashina API を追加</button>
+          <button id="removeSarashina">Sarashina API を削除</button>
           <p id="sarashinaApiResponse"></p>
-          <h4>API limits</h4>
-          <p>Change these only if the limits of the API change. They are applied right away.</p>
+          <h4>API の送信制限</h4>
           <label for="sarashinaRequests">Requests per window</label><br>
           <input type="number" id="sarashinaRequests" min="1" step="1" value="6" style="width: 8em;"><br>
           <label for="sarashinaWindow">Window length (seconds)</label><br>
           <input type="number" id="sarashinaWindow" min="1" step="1" value="60" style="width: 8em;"><br>
-          <label for="sarashinaMaxChars">Max characters per request (the API allows 5000; the style instruction is included)</label><br>
+          <label for="sarashinaMaxChars">Max characters per request</label><br>
           <input type="number" id="sarashinaMaxChars" min="100" step="100" value="4700" style="width: 8em;"><br>
-          <h4>Style of the Japanese translation</h4>
-          <p>An instruction is added before the text, because the API has no option for it.</p>
+          <h4>日本語訳の文体</h4>
           <select id="sarashinaStyle">
             <option value="dearu">だ・である</option>
             <option value="desumasu">です・ます</option>
-            <option value="none">Not specified</option>
+            <option value="none">指定しない</option>
           </select><br>
           <br>
-          <button id="resetSarashinaLimits">Reset to defaults</button>
+          <details>
+            <summary>Endpoint URL</summary>
+            <input type="url" id="sarashinaEndpoint" value="https://api.sarashina.ai/v1/translate"
+              aria-label="Endpoint URL" style="width: 90%;" required autocomplete="off" spellcheck="false">
+          </details>
+          <br>
+          <button id="resetSarashinaLimits">初期設定に戻す</button>
         </div>
         <hr>
         <div>

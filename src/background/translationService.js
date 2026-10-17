@@ -1656,11 +1656,12 @@ const translationService = (function () {
    * paragraphs fit in the free request slots, they are split evenly between them and sent in parallel;
    * otherwise each request is filled up to `maxBatchLength`. Text translations are sent first.
    * @param {string} apiKey
-   * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number, style?: "none" | "dearu" | "desumasu"}} limits
+   * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number, style?: "none" | "dearu" | "desumasu", endpointUrl?: string}} limits
    * @returns {Service} sarashinaService
    */
   const createSarashinaService = (apiKey, limits = {}) => {
-    const API_URL = "https://api.sarashina.ai/v1/translate";
+    const DEFAULT_API_URL = "https://api.sarashina.ai/v1/translate";
+    let apiUrl = DEFAULT_API_URL;
     // Wait for the other messages of the same burst before planning the batches.
     const COALESCE_DELAY = 300;
     // Small pieces of a page arrive one by one (its title before its text, ads and other content added
@@ -1685,8 +1686,14 @@ const translationService = (function () {
     const isInstructionLine = (line) =>
       /翻訳者への指示|^[（(]?翻訳者注/.test(line.trim());
     // translations in another style must not come from the cache
-    const getCacheName = (targetLanguage) =>
-      getInstruction(targetLanguage) ? "sarashina-" + translationStyle : "sarashina";
+    const getCacheName = (targetLanguage) => {
+      const name = getInstruction(targetLanguage)
+        ? "sarashina-" + translationStyle
+        : "sarashina";
+      return apiUrl === DEFAULT_API_URL
+        ? name
+        : name + "-" + encodeURIComponent(apiUrl);
+    };
 
     // The API limits, configurable in the options page (see `setLimits`)
     let maxRequests = 6;
@@ -1700,14 +1707,16 @@ const translationService = (function () {
     let firstBatchLength = 1500;
 
     /**
-     * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number, style?: "none" | "dearu" | "desumasu"}} limits
+     * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number, style?: "none" | "dearu" | "desumasu", endpointUrl?: string}} limits
      */
     const setLimits = ({
       requestsPerWindow = 6,
       windowSeconds = 60,
       maxCharacters = 4700,
       style = "dearu",
+      endpointUrl = DEFAULT_API_URL,
     } = {}) => {
+      apiUrl = endpointUrl;
       translationStyle = STYLE_INSTRUCTIONS[style] !== undefined ? style : "dearu";
       maxRequests = Math.max(1, Math.floor(requestsPerWindow) || 6);
       // A request sent exactly 60s after the first one of the window was still rejected.
@@ -1923,7 +1932,7 @@ const translationService = (function () {
     const sendBatch = async (batch) => {
       requestsInFlight++;
       try {
-        const response = await fetch(API_URL, {
+        const response = await fetch(apiUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

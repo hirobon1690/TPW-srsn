@@ -10,8 +10,8 @@ const twpConfig = (function () {
    */
   const defaultConfig = {
     uiLanguage: "default",
-    pageTranslatorService: "google", // google yandex bing sarashina
-    textTranslatorService: "google", // google yandex bing deepl libre sarashina
+    pageTranslatorService: "sarashina", // google yandex bing sarashina
+    textTranslatorService: "sarashina", // google yandex bing deepl libre sarashina
     textToSpeechService: "google", // google bing
     enabledServices: ["google", "bing", "yandex", "deepl"],
     ttsSpeed: 1.0,
@@ -229,6 +229,16 @@ const twpConfig = (function () {
       // load config; convert object/array to map/set if necessary
       for (const name in onGot) {
         config[name] = fixObjectType(name, onGot[name]);
+      }
+
+      // Sarashina becomes available after an API key has been registered.
+      if (!config.customServices.some((service) => service.name === "sarashina")) {
+        if (config.pageTranslatorService === "sarashina") {
+          config.pageTranslatorService = "google";
+        }
+        if (config.textTranslatorService === "sarashina") {
+          config.textTranslatorService = "google";
+        }
       }
 
       // if there are any targetLanguage undefined, replace them
