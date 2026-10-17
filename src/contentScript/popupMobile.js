@@ -270,6 +270,11 @@ void (async function () {
     serviceIconElement.style.scale = null;
     serviceIconElement.style.rotate = null;
   };
+  if (twpConfig.get("customServices").find((cs) => cs.name === "sarashina")) {
+    serviceSelector
+      .querySelector('option[value="sarashina"]')
+      .removeAttribute("hidden");
+  }
   serviceSelector.value = twpConfig.get("pageTranslatorService");
 
   // gear button

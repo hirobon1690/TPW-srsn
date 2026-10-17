@@ -152,6 +152,7 @@ twpConfig
     const sBing = document.getElementById("sBing");
     const sDeepL = document.getElementById("sDeepL");
     const sLibre = document.getElementById("sLibre");
+    const sSarashina = document.getElementById("sSarashina");
     const eCopy = document.getElementById("copy");
     const eListenOriginal = document.getElementById("listenOriginal");
     const eListenTranslated = document.getElementById("listenTranslated");
@@ -194,6 +195,7 @@ twpConfig
       sBing.classList.remove("selected");
       sDeepL.classList.remove("selected");
       sLibre.classList.remove("selected");
+      sSarashina.classList.remove("selected");
 
       sGoogle.classList.add("selected");
     };
@@ -207,6 +209,7 @@ twpConfig
       sBing.classList.remove("selected");
       sDeepL.classList.remove("selected");
       sLibre.classList.remove("selected");
+      sSarashina.classList.remove("selected");
 
       sYandex.classList.add("selected");
     };
@@ -220,6 +223,7 @@ twpConfig
       sBing.classList.remove("selected");
       sDeepL.classList.remove("selected");
       sLibre.classList.remove("selected");
+      sSarashina.classList.remove("selected");
 
       sBing.classList.add("selected");
     };
@@ -233,6 +237,7 @@ twpConfig
       sBing.classList.remove("selected");
       sDeepL.classList.remove("selected");
       sLibre.classList.remove("selected");
+      sSarashina.classList.remove("selected");
 
       sDeepL.classList.add("selected");
     };
@@ -246,8 +251,23 @@ twpConfig
       sBing.classList.remove("selected");
       sDeepL.classList.remove("selected");
       sLibre.classList.remove("selected");
+      sSarashina.classList.remove("selected");
 
       sLibre.classList.add("selected");
+    };
+    sSarashina.onclick = () => {
+      currentTextTranslatorService = "sarashina";
+      twpConfig.set("textTranslatorService", "sarashina");
+      translateText();
+
+      sGoogle.classList.remove("selected");
+      sYandex.classList.remove("selected");
+      sBing.classList.remove("selected");
+      sDeepL.classList.remove("selected");
+      sLibre.classList.remove("selected");
+      sSarashina.classList.remove("selected");
+
+      sSarashina.classList.add("selected");
     };
 
     const setTargetLanguage = document.getElementById("setTargetLanguage");
@@ -348,6 +368,9 @@ twpConfig
       case "google":
         sGoogle.classList.add("selected");
         break;
+      case "sarashina":
+        sSarashina.classList.add("selected");
+        break;
       case "libre":
         sLibre.classList.add("selected");
       default:
@@ -381,6 +404,13 @@ twpConfig
     } else {
       sLibre.setAttribute("hidden", "");
     }
+    if (
+      twpConfig.get("customServices").find((cs) => cs.name === "sarashina")
+    ) {
+      sSarashina.removeAttribute("hidden");
+    } else {
+      sSarashina.setAttribute("hidden", "");
+    }
 
     twpConfig.onChanged((name, newvalue) => {
       switch (name) {
@@ -413,6 +443,11 @@ twpConfig
             sLibre.removeAttribute("hidden");
           } else {
             sLibre.setAttribute("hidden", "");
+          }
+          if (newvalue.find((cs) => cs.name === "sarashina")) {
+            sSarashina.removeAttribute("hidden");
+          } else {
+            sSarashina.setAttribute("hidden", "");
           }
           break;
         }
