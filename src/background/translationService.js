@@ -1636,6 +1636,7 @@ const translationService = (function () {
   /**
    * @typedef {Object} SarashinaQueueItem
    * @property {string} key Identifies the paragraph this item belongs to (used to prioritize it).
+   * @property {number} queuedAt
    * @property {string} text
    * @property {string} sourceLanguage
    * @property {string} targetLanguage
@@ -1653,7 +1654,7 @@ const translationService = (function () {
    *
    * The page translator sends the whole page, ordered by distance from the viewport. When the remaining
    * paragraphs fit in the free request slots, they are split evenly between them and sent in parallel;
-   * otherwise each request is filled up to `maxBatchLength`. One slot is kept for text translations.
+   * otherwise each request is filled up to `maxBatchLength`. Text translations are sent first.
    * @param {string} apiKey
    * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number}} limits
    * @returns {Service} sarashinaService
@@ -1662,14 +1663,16 @@ const translationService = (function () {
     const API_URL = "https://api.sarashina.ai/v1/translate";
     // Wait for the other messages of the same burst before planning the batches.
     const COALESCE_DELAY = 300;
+    // Small pieces of a page arrive one by one (its title before its text, ads and other content added
+    // later): while less than minSplitLength is queued, wait up to this long for more before using a
+    // request slot.
+    const SMALL_BATCH_WAIT = 2000;
 
     // The API limits, configurable in the options page (see `setLimits`)
     let maxRequests = 6;
     let rateLimitWindow = 62000;
     let maxTextLength = 5000;
     let maxBatchLength = 4500;
-    // Request slots that page translation leaves free for text translations.
-    let reservedForTextTranslation = 1;
     // Don't split the remaining paragraphs into batches smaller than this.
     let minSplitLength = 1000;
     // When the page doesn't fit in the free slots, the first batch is kept small so the paragraphs
@@ -1690,7 +1693,6 @@ const translationService = (function () {
       maxTextLength = Math.max(100, Math.floor(maxCharacters) || 5000);
       // ~3.5s per 1000 characters. Leaves room below maxTextLength for the line breaks.
       maxBatchLength = Math.floor(maxTextLength * 0.9);
-      reservedForTextTranslation = maxRequests > 1 ? 1 : 0;
       minSplitLength = Math.min(1000, maxBatchLength);
       firstBatchLength = Math.min(1500, maxBatchLength);
     };
@@ -1859,15 +1861,28 @@ const translationService = (function () {
           freeSlots--;
         }
 
-        const pageSlots = freeSlots - reservedForTextTranslation;
-        if (pageSlots > 0) {
-          for (const batch of planPageBatches(pageSlots)) {
+        const pageItems = queue.filter((item) => !item.isTextTranslation);
+        const pageLength = pageItems.reduce(
+          (total, item) => total + item.text.length,
+          0,
+        );
+        const waitForMore =
+          pageItems.length > 0 && pageLength < minSplitLength
+            ? Math.min(...pageItems.map((item) => item.queuedAt)) +
+              SMALL_BATCH_WAIT -
+              now
+            : 0;
+
+        if (waitForMore > 0) {
+          schedulePump(waitForMore);
+        } else if (freeSlots > 0) {
+          for (const batch of planPageBatches(freeSlots)) {
             requestTimes.push(now);
             sendBatch(batch);
           }
         }
 
-        if (queue.length > 0 && requestTimes.length > 0) {
+        if (waitForMore <= 0 && queue.length > 0 && requestTimes.length > 0) {
           // wait for the next free slot
           schedulePump(requestTimes[0] + rateLimitWindow - now + 100);
         }
@@ -2003,6 +2018,7 @@ const translationService = (function () {
                   ? queue.unshift.bind(queue)
                   : queue.push.bind(queue))({
                   key,
+                  queuedAt: Date.now(),
                   text: part,
                   sourceLanguage,
                   targetLanguage,
@@ -2053,23 +2069,16 @@ const translationService = (function () {
             (total, item) => total + item.text.length,
             0,
           );
-          // page translation can't use the slot kept for text translations
-          const slotsToWaitFor = reservedForTextTranslation + 1 - freeSlots;
           const nextSlotIn =
-            slotsToWaitFor > 0
-              ? Math.max(
-                  0,
-                  recentRequests[slotsToWaitFor - 1] + rateLimitWindow - now,
-                )
-              : 0;
+            freeSlots > 0
+              ? 0
+              : Math.max(0, recentRequests[0] + rateLimitWindow - now);
           const pausedFor = Math.max(0, pausedUntil - now);
 
           // rough estimate: full windows of page batches, plus the time to translate the last one
           let estimatedTime = 0;
           if (queuedLength > 0) {
-            const lengthPerWindow =
-              (maxRequests - reservedForTextTranslation) *
-              maxBatchLength;
+            const lengthPerWindow = maxRequests * maxBatchLength;
             estimatedTime =
               Math.max(nextSlotIn, pausedFor) +
               (Math.ceil(queuedLength / lengthPerWindow) - 1) * rateLimitWindow +
