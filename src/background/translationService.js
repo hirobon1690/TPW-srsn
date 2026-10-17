@@ -1656,7 +1656,7 @@ const translationService = (function () {
    * paragraphs fit in the free request slots, they are split evenly between them and sent in parallel;
    * otherwise each request is filled up to `maxBatchLength`. Text translations are sent first.
    * @param {string} apiKey
-   * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number}} limits
+   * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number, style?: "none" | "dearu" | "desumasu"}} limits
    * @returns {Service} sarashinaService
    */
   const createSarashinaService = (apiKey, limits = {}) => {
@@ -1667,6 +1667,26 @@ const translationService = (function () {
     // later): while less than minSplitLength is queued, wait up to this long for more before using a
     // request slot.
     const SMALL_BATCH_WAIT = 2000;
+
+    // The translate API has no option for the style of the Japanese text, but it follows an instruction
+    // put before the text. Written in Japanese with the sentence endings spelled out, the instruction
+    // itself is not returned.
+    const STYLE_INSTRUCTIONS = {
+      none: "",
+      dearu:
+        "（翻訳者への指示：文末は「〜だ」「〜である」「〜した」のように書き、「〜です」「〜ます」「〜しました」は使わないこと）",
+      desumasu:
+        "（翻訳者への指示：文末は「〜です」「〜ます」「〜しました」のように書き、「〜だ」「〜である」「〜した」で終えないこと）",
+    };
+    let translationStyle = "dearu";
+    const getInstruction = (targetLanguage) =>
+      targetLanguage === "ja" ? STYLE_INSTRUCTIONS[translationStyle] : "";
+    // the instruction, when the translation returns it anyway
+    const isInstructionLine = (line) =>
+      /翻訳者への指示|^[（(]?翻訳者注/.test(line.trim());
+    // translations in another style must not come from the cache
+    const getCacheName = (targetLanguage) =>
+      getInstruction(targetLanguage) ? "sarashina-" + translationStyle : "sarashina";
 
     // The API limits, configurable in the options page (see `setLimits`)
     let maxRequests = 6;
@@ -1680,13 +1700,15 @@ const translationService = (function () {
     let firstBatchLength = 1500;
 
     /**
-     * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number}} limits
+     * @param {{requestsPerWindow?: number, windowSeconds?: number, maxCharacters?: number, style?: "none" | "dearu" | "desumasu"}} limits
      */
     const setLimits = ({
       requestsPerWindow = 6,
       windowSeconds = 60,
       maxCharacters = 5000,
+      style = "dearu",
     } = {}) => {
+      translationStyle = STYLE_INSTRUCTIONS[style] !== undefined ? style : "dearu";
       maxRequests = Math.max(1, Math.floor(requestsPerWindow) || 6);
       // A request sent exactly 60s after the first one of the window was still rejected.
       rateLimitWindow = Math.max(1, Number(windowSeconds) || 60) * 1000 + 2000;
@@ -1903,7 +1925,12 @@ const translationService = (function () {
             Authorization: "Bearer " + apiKey,
           },
           body: JSON.stringify({
-            text: batch.map((item) => item.text).join("\n"),
+            text: [
+              getInstruction(batch[0].targetLanguage),
+              ...batch.map((item) => item.text),
+            ]
+              .filter((text) => text)
+              .join("\n"),
             source_lang: batch[0].sourceLanguage,
             target_lang: batch[0].targetLanguage,
           }),
@@ -1925,16 +1952,35 @@ const translationService = (function () {
         }
 
         /** @type {string} */
-        const translatedText = (await response.json()).translated_text;
+        const translatedText = (await response.json()).translated_text
+          .split("\n")
+          .filter((line) => !isInstructionLine(line))
+          .join("\n");
         if (batch.length === 1) {
           // the API ends lines with two spaces (markdown line breaks)
-          batch[0].resolve(translatedText.replace(/[ \t]+\n/g, "\n").trim());
+          let lines = translatedText.replace(/[ \t]+\n/g, "\n").trim().split("\n");
+          // the instruction was returned, translated into something else
+          const sourceLineCount = batch[0].text.split("\n").filter((l) => l.trim()).length;
+          if (
+            getInstruction(batch[0].targetLanguage) &&
+            lines.filter((l) => l.trim()).length === sourceLineCount + 1
+          ) {
+            lines = lines.slice(lines.findIndex((l) => l.trim()) + 1);
+          }
+          batch[0].resolve(lines.join("\n").trim());
           return;
         }
 
         let lines = translatedText.split("\n").map((line) => line.trim());
         if (lines.length !== batch.length) {
           lines = lines.filter((line) => line);
+        }
+        // the instruction was returned, translated into something else
+        if (
+          lines.length === batch.length + 1 &&
+          getInstruction(batch[0].targetLanguage)
+        ) {
+          lines.shift();
         }
         if (lines.length === batch.length) {
           batch.forEach((item, i) => item.resolve(lines[i]));
@@ -2009,7 +2055,9 @@ const translationService = (function () {
       let promise = translationsInProgress.get(key);
       if (!promise) {
         if (queue.length === 0 && requestsInFlight === 0) startedFromIdle = true;
-        const maxLength = isTextTranslation ? maxTextLength : maxBatchLength;
+        const maxLength = isTextTranslation
+          ? maxTextLength - getInstruction(targetLanguage).length - 1
+          : maxBatchLength;
         promise = Promise.all(
           splitText(text, maxLength).map(
             (part) =>
@@ -2132,7 +2180,7 @@ const translationService = (function () {
               );
               const cacheEntry = text
                 ? await translationCache.get(
-                    "sarashina",
+                    getCacheName(targetLanguage),
                     sourceLanguage,
                     targetLanguage,
                     originalText,
@@ -2158,7 +2206,7 @@ const translationService = (function () {
                 );
                 if (!dontSaveInPersistentCache && translatedText) {
                   translationCache.set(
-                    "sarashina",
+                    getCacheName(targetLanguage),
                     sourceLanguage,
                     targetLanguage,
                     originalText,

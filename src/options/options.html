@@ -622,6 +622,13 @@
           <input type="number" id="sarashinaWindow" min="1" step="1" value="60" style="width: 8em;"><br>
           <label for="sarashinaMaxChars">Max characters per request</label><br>
           <input type="number" id="sarashinaMaxChars" min="100" step="100" value="5000" style="width: 8em;"><br>
+          <h4>Style of the Japanese translation</h4>
+          <p>An instruction is added before the text, because the API has no option for it.</p>
+          <select id="sarashinaStyle">
+            <option value="dearu">だ・である</option>
+            <option value="desumasu">です・ます</option>
+            <option value="none">Not specified</option>
+          </select><br>
           <br>
           <button id="resetSarashinaLimits">Reset to defaults</button>
         </div>

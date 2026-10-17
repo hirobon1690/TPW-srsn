@@ -1528,7 +1528,7 @@ twpConfig
     }
 
     function saveSarashinaLimits() {
-      const limits = readSarashinaLimits();
+      const limits = { ...readSarashinaLimits(), style: $("#sarashinaStyle").value };
       const customServices = twpConfig.get("customServices");
       const sarashina = customServices.find((cs) => cs.name === "sarashina");
       if (sarashina) {
@@ -1544,11 +1544,13 @@ twpConfig
     Object.values(sarashinaLimitInputs).forEach(([selector]) => {
       $(selector).onchange = saveSarashinaLimits;
     });
+    $("#sarashinaStyle").onchange = saveSarashinaLimits;
 
     $("#resetSarashinaLimits").onclick = () => {
       Object.values(sarashinaLimitInputs).forEach(([selector, defaultValue]) => {
         $(selector).value = defaultValue;
       });
+      $("#sarashinaStyle").value = "dearu";
       saveSarashinaLimits();
     };
 
@@ -1557,6 +1559,7 @@ twpConfig
         name: "sarashina",
         apiKey: $("#sarashinaKEY").value.trim(),
         ...readSarashinaLimits(),
+        style: $("#sarashinaStyle").value,
       };
       try {
         const response = await testSarashinaApiKey(sarashina.apiKey);
@@ -1634,6 +1637,7 @@ twpConfig
       )) {
         $(selector).value = sarashina[name] ?? defaultValue;
       }
+      $("#sarashinaStyle").value = sarashina.style ?? "dearu";
     }
 
     $("#showMobilePopupOnDesktop").onchange = (e) => {
