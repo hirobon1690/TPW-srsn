@@ -596,5 +596,70 @@
   },
   "btnChangePosition": {
     "message": "Change position"
+  },
+  "msgSarashinaProgress": {
+    "message": "Sarashina: $DONE$ of $TOTAL$ paragraphs translated",
+    "placeholders": {
+      "DONE": {
+        "content": "$1"
+      },
+      "TOTAL": {
+        "content": "$2"
+      }
+    }
+  },
+  "msgSarashinaTranslating": {
+    "message": "translating $COUNT$ requests",
+    "placeholders": {
+      "COUNT": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaWaiting": {
+    "message": "$CHARACTERS$ characters waiting, next request in $SECONDS$ s",
+    "placeholders": {
+      "CHARACTERS": {
+        "content": "$1"
+      },
+      "SECONDS": {
+        "content": "$2"
+      }
+    }
+  },
+  "msgSarashinaPaused": {
+    "message": "rate limited, resuming in $SECONDS$ s",
+    "placeholders": {
+      "SECONDS": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaEstimatedTime": {
+    "message": "about $SECONDS$ s left",
+    "placeholders": {
+      "SECONDS": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaDone": {
+    "message": "Sarashina: all $TOTAL$ paragraphs translated",
+    "placeholders": {
+      "TOTAL": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaSlots": {
+    "message": "Free requests: $FREE$ of $MAX$ per minute",
+    "placeholders": {
+      "FREE": {
+        "content": "$1"
+      },
+      "MAX": {
+        "content": "$2"
+      }
+    }
   }
 }

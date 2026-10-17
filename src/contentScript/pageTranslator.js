@@ -385,6 +385,8 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
 
   // Pieces are a set of nodes separated by inline tags that form a sentence or paragraph.
   let piecesToTranslate = [];
+  // paragraphs (text blocks) sent to Sarashina and translated, shown in the popup
+  let sarashinaProgress = { total: 0, done: 0 };
   let originalTabLanguage = "und";
   let currentPageLanguage = "und";
   let pageLanguageState = "original";
@@ -1029,6 +1031,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
       unit.isWaitingTranslation = true;
     });
     units.sort((a, b) => a.distance - b.distance);
+    sarashinaProgress.total += units.length;
 
     /**
      * Splits the translation of a unit back into its pieces.
@@ -1058,6 +1061,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
         dontSortResults
       ).then((results) => {
         group.forEach((unit) => (unit.isWaitingTranslation = false));
+        if (currentFooCount === fooCount) sarashinaProgress.done += group.length;
         if (
           !results ||
           pageLanguageState !== "translated" ||
@@ -1308,6 +1312,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
     }
 
     piecesToTranslate = getPiecesToTranslate();
+    sarashinaProgress = { total: 0, done: 0 };
     attributesToTranslate = getAttributesToTranslate();
 
     pageLanguageState = "translated";
@@ -1333,6 +1338,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
   pageTranslator.restorePage = function () {
     fooCount++;
     piecesToTranslate = [];
+    sarashinaProgress = { total: 0, done: 0 };
 
     showOriginal.disable();
     disableMutatinObserver();
@@ -1427,6 +1433,8 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
       sendResponse(pageLanguageState);
     } else if (request.action === "getCurrentPageTranslatorService") {
       sendResponse(currentPageTranslatorService);
+    } else if (request.action === "getSarashinaPageStatus") {
+      sendResponse(sarashinaProgress);
     } else if (request.action === "swapTranslationService") {
       pageTranslator.swapTranslationService(request.newServiceName);
     } else if (request.action === "toggle-translation") {

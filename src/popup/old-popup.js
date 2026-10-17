@@ -265,7 +265,97 @@ twpConfig
 
     let showSelectTargetLanguage = false;
 
+    // Sarashina allows only 6 requests per minute, so a long page takes a while: show the progress
+    const sarashinaStatus = document.getElementById("sarashinaStatus");
+    function updateSarashinaStatus() {
+      if (
+        currentPageTranslatorService !== "sarashina" ||
+        currentPageLanguageState !== "translated" ||
+        showSelectTargetLanguage
+      ) {
+        sarashinaStatus.style.display = "none";
+        return;
+      }
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.tabs.sendMessage(
+          tabs[0].id,
+          { action: "getSarashinaPageStatus" },
+          { frameId: 0 },
+          (pageStatus) => {
+            checkedLastError();
+            chrome.runtime.sendMessage(
+              { action: "getSarashinaStatus" },
+              (queueStatus) => {
+                checkedLastError();
+                if (!pageStatus || !queueStatus) return;
+                const seconds = (ms) => String(Math.ceil(ms / 1000));
+                const lines = [];
+                if (pageStatus.done < pageStatus.total) {
+                  lines.push(
+                    twpI18n.getMessage("msgSarashinaProgress", [
+                      String(pageStatus.done),
+                      String(pageStatus.total),
+                    ])
+                  );
+                  const details = [];
+                  if (queueStatus.requestsInFlight > 0) {
+                    details.push(
+                      twpI18n.getMessage("msgSarashinaTranslating", [
+                        String(queueStatus.requestsInFlight),
+                      ])
+                    );
+                  }
+                  if (queueStatus.pausedFor > 0) {
+                    details.push(
+                      twpI18n.getMessage("msgSarashinaPaused", [
+                        seconds(queueStatus.pausedFor),
+                      ])
+                    );
+                  } else if (queueStatus.queuedLength > 0) {
+                    details.push(
+                      twpI18n.getMessage("msgSarashinaWaiting", [
+                        queueStatus.queuedLength.toLocaleString(),
+                        seconds(queueStatus.nextSlotIn),
+                      ])
+                    );
+                  }
+                  if (queueStatus.estimatedTime > 0) {
+                    details.push(
+                      twpI18n.getMessage("msgSarashinaEstimatedTime", [
+                        seconds(queueStatus.estimatedTime),
+                      ])
+                    );
+                  }
+                  if (details.length > 0) lines.push(details.join(" · "));
+                } else if (pageStatus.total > 0) {
+                  lines.push(
+                    twpI18n.getMessage("msgSarashinaDone", [
+                      String(pageStatus.total),
+                    ])
+                  );
+                }
+                lines.push(
+                  twpI18n.getMessage("msgSarashinaSlots", [
+                    String(queueStatus.freeSlots),
+                    String(queueStatus.maxSlots),
+                  ])
+                );
+                sarashinaStatus.textContent = "";
+                lines.forEach((line, i) => {
+                  if (i > 0) sarashinaStatus.appendChild(document.createElement("br"));
+                  sarashinaStatus.appendChild(document.createTextNode(line));
+                });
+                sarashinaStatus.style.display = "block";
+              }
+            );
+          }
+        );
+      });
+    }
+    setInterval(updateSarashinaStatus, 1000);
+
     function updateInterface() {
+      updateSarashinaStatus();
       if (currentPageTranslatorService == "yandex") {
         $("#btnOptions option[value='translateInExternalSite']").textContent =
           twpI18n.getMessage("msgOpenOnYandexTranslator");

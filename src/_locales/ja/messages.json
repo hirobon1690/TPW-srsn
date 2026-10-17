@@ -596,5 +596,70 @@
   },
   "btnChangePosition": {
     "message": "位置を変更"
+  },
+  "msgSarashinaProgress": {
+    "message": "Sarashina: $TOTAL$ 段落中 $DONE$ 段落を翻訳済み",
+    "placeholders": {
+      "DONE": {
+        "content": "$1"
+      },
+      "TOTAL": {
+        "content": "$2"
+      }
+    }
+  },
+  "msgSarashinaTranslating": {
+    "message": "$COUNT$ 件を翻訳中",
+    "placeholders": {
+      "COUNT": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaWaiting": {
+    "message": "$CHARACTERS$ 文字が待機中（次の送信まで $SECONDS$ 秒）",
+    "placeholders": {
+      "CHARACTERS": {
+        "content": "$1"
+      },
+      "SECONDS": {
+        "content": "$2"
+      }
+    }
+  },
+  "msgSarashinaPaused": {
+    "message": "送信制限中（$SECONDS$ 秒後に再開）",
+    "placeholders": {
+      "SECONDS": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaEstimatedTime": {
+    "message": "残り約 $SECONDS$ 秒",
+    "placeholders": {
+      "SECONDS": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaDone": {
+    "message": "Sarashina: 全 $TOTAL$ 段落を翻訳しました",
+    "placeholders": {
+      "TOTAL": {
+        "content": "$1"
+      }
+    }
+  },
+  "msgSarashinaSlots": {
+    "message": "送信枠: 1 分あたり $MAX$ 件中 $FREE$ 件が空き",
+    "placeholders": {
+      "FREE": {
+        "content": "$1"
+      },
+      "MAX": {
+        "content": "$2"
+      }
+    }
   }
 }

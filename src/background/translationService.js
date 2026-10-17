@@ -2008,6 +2008,56 @@ const translationService = (function () {
         removeTranslationsWithError() {},
 
         /**
+         * State of the queue and the rate limit, shown in the popup.
+         */
+        getStatus() {
+          const now = Date.now();
+          const recentRequests = requestTimes.filter(
+            (time) => time > now - RATE_LIMIT_WINDOW,
+          );
+          const freeSlots = MAX_REQUESTS_PER_MINUTE - recentRequests.length;
+          const queuedLength = queue.reduce(
+            (total, item) => total + item.text.length,
+            0,
+          );
+          // page translation can't use the slot kept for text translations
+          const slotsToWaitFor = RESERVED_FOR_TEXT_TRANSLATION + 1 - freeSlots;
+          const nextSlotIn =
+            slotsToWaitFor > 0
+              ? Math.max(
+                  0,
+                  recentRequests[slotsToWaitFor - 1] + RATE_LIMIT_WINDOW - now,
+                )
+              : 0;
+          const pausedFor = Math.max(0, pausedUntil - now);
+
+          // rough estimate: full windows of page batches, plus the time to translate the last one
+          let estimatedTime = 0;
+          if (queuedLength > 0) {
+            const lengthPerWindow =
+              (MAX_REQUESTS_PER_MINUTE - RESERVED_FOR_TEXT_TRANSLATION) *
+              MAX_BATCH_LENGTH;
+            estimatedTime =
+              Math.max(nextSlotIn, pausedFor) +
+              (Math.ceil(queuedLength / lengthPerWindow) - 1) * RATE_LIMIT_WINDOW +
+              15000;
+          } else if (requestsInFlight > 0) {
+            estimatedTime = 15000;
+          }
+
+          return {
+            queuedItems: queue.length,
+            queuedLength,
+            requestsInFlight,
+            freeSlots,
+            maxSlots: MAX_REQUESTS_PER_MINUTE,
+            nextSlotIn,
+            pausedFor,
+            estimatedTime,
+          };
+        },
+
+        /**
          * The inline fragments of each `sourceArray` are translated together as one paragraph;
          * the result is placed in the first fragment and the others are replaced with a space.
          * @param {string} sourceLanguage
@@ -2292,6 +2342,8 @@ const translationService = (function () {
         "deepl",
         /** @type {Service} */ /** @type {?} */ (deeplService),
       );
+    } else if (request.action === "getSarashinaStatus") {
+      sendResponse(serviceList.get("sarashina")?.getStatus() || null);
     } else if (request.action === "prioritizeTranslations") {
       const service = serviceList.get(request.translationService);
       if (service?.prioritize) {
