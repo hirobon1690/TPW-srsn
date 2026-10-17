@@ -964,6 +964,147 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
     }
   }
 
+  // text blocks whose pieces (split by inline formulas, images...) are translated together as one sentence
+  const sarashinaTextBlocks = [
+    "p", "li", "td", "th", "dd", "dt", "figcaption", "caption", "blockquote",
+    "h1", "h2", "h3", "h4", "h5", "h6", "label",
+  ];
+  // marks the place of the elements between the pieces; the translation usually keeps it
+  const sarashinaSeparator = " … ";
+
+  /**
+   * Sarashina allows only 6 requests per minute: the whole page is sent at once, nearest to the viewport
+   * first, so the background can pack it into as few requests as possible.
+   */
+  function translateWithSarashina(
+    getSourceArray2d,
+    topIsInScreen,
+    bottomIsInScreen,
+    innerHeight,
+    currentFooCount
+  ) {
+    const distanceFromScreen = (ptt) => {
+      if (bottomIsInScreen(ptt.topElement) || topIsInScreen(ptt.bottomElement))
+        return 0;
+      const rect = ptt.topElement?.getBoundingClientRect();
+      if (!rect) return Infinity;
+      // paragraphs below the screen come before the ones above it
+      return rect.top > 0 ? rect.top : 2 * innerHeight - rect.bottom;
+    };
+
+    // group consecutive pieces of the same text block
+    const units = [];
+    for (const ptt of piecesToTranslate) {
+      if (ptt.isTranslated) continue;
+      // with scripts enabled the content of <noscript> is raw HTML (BBC has ~20000 characters of menus)
+      if (ptt.parentElement?.closest?.("noscript")) {
+        ptt.isTranslated = true;
+        continue;
+      }
+      const last = units[units.length - 1];
+      const lastPiece = last?.pieces[last.pieces.length - 1];
+      if (
+        lastPiece &&
+        ptt.parentElement &&
+        ptt.parentElement === lastPiece.parentElement &&
+        piecesToTranslate.indexOf(lastPiece) === piecesToTranslate.indexOf(ptt) - 1 &&
+        sarashinaTextBlocks.includes(ptt.parentElement.nodeName.toLowerCase())
+      ) {
+        last.pieces.push(ptt);
+      } else {
+        units.push({ pieces: [ptt] });
+      }
+    }
+    units.forEach((unit) => {
+      unit.sourceArray = [
+        getSourceArray2d(unit.pieces)
+          .map((sourceArray) => sourceArray.join(""))
+          .join(sarashinaSeparator),
+      ];
+      unit.distance = Math.min(...unit.pieces.map(distanceFromScreen));
+      unit.pieces.forEach((ptt) => {
+        ptt.isTranslated = true;
+        ptt.sarashinaUnit = unit;
+      });
+      unit.isWaitingTranslation = true;
+    });
+    units.sort((a, b) => a.distance - b.distance);
+
+    /**
+     * Splits the translation of a unit back into its pieces.
+     * @returns {string[][]} the results for each piece, one string per node
+     */
+    const getPieceResults = (unit, translated) => {
+      let parts = [translated];
+      if (unit.pieces.length > 1) {
+        parts = translated.split(/\s*(?:…|⋯|\.\.\.)\s*/);
+        if (parts.length !== unit.pieces.length) {
+          parts = [translated, ...unit.pieces.slice(1).map(() => " ")];
+        }
+      }
+      return unit.pieces.map((ptt, i) =>
+        ptt.nodes.map((_, j) => (j === 0 ? parts[i] || " " : " "))
+      );
+    };
+
+    // send in small groups so each group is shown as soon as it's translated
+    for (let i = 0; i < units.length; i += 10) {
+      const group = units.slice(i, i + 10);
+      backgroundTranslateHTML(
+        currentPageTranslatorService,
+        currentSourceLanguage,
+        currentTargetLanguage,
+        group.map((unit) => unit.sourceArray),
+        dontSortResults
+      ).then((results) => {
+        group.forEach((unit) => (unit.isWaitingTranslation = false));
+        if (
+          !results ||
+          pageLanguageState !== "translated" ||
+          currentFooCount !== fooCount
+        )
+          return;
+        const pieces = [];
+        const pieceResults = [];
+        group.forEach((unit, k) => {
+          // an empty result means the translation failed: keep the original text
+          if (!results[k] || !results[k][0]) return;
+          pieces.push(...unit.pieces);
+          pieceResults.push(...getPieceResults(unit, results[k][0]));
+        });
+        translateResults(pieces, pieceResults);
+      });
+    }
+
+    // units scrolled into view that are still waiting go to the front of the queue
+    const unitsToPrioritize = new Set();
+    piecesToTranslate.forEach((ptt) => {
+      const unit = ptt.sarashinaUnit;
+      if (
+        unit &&
+        unit.isWaitingTranslation &&
+        !unit.isPrioritized &&
+        !units.includes(unit) &&
+        distanceFromScreen(ptt) === 0
+      ) {
+        unitsToPrioritize.add(unit);
+      }
+    });
+    if (unitsToPrioritize.size > 0) {
+      unitsToPrioritize.forEach((unit) => (unit.isPrioritized = true));
+      chrome.runtime.sendMessage(
+        {
+          action: "prioritizeTranslations",
+          translationService: currentPageTranslatorService,
+          sourceLanguage: currentSourceLanguage,
+          targetLanguage: currentTargetLanguage,
+          sourceArray2d: [...unitsToPrioritize].map((unit) => unit.sourceArray),
+        },
+        checkedLastError
+      );
+    }
+  }
+
   function translationRoutine() {
     try {
       if (piecesToTranslate && pageIsVisible) {
@@ -1008,6 +1149,28 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
 
           const currentFooCount = fooCount;
 
+          const getSourceArray2d = (pieces) =>
+            pieces.map((ptt) =>
+              ptt.nodes.map((node) =>
+                filterKeywordsInText(
+                  node.textContent,
+                  customDictionary,
+                  currentPageTranslatorService
+                )
+              )
+            );
+
+          if (currentPageTranslatorService === "sarashina") {
+            translateWithSarashina(
+              getSourceArray2d,
+              topIsInScreen,
+              bottomIsInScreen,
+              innerHeight,
+              currentFooCount
+            );
+            return;
+          }
+
           const piecesToTranslateNow = [];
           piecesToTranslate.forEach((ptt) => {
             if (!ptt.isTranslated) {
@@ -1036,15 +1199,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
               currentPageTranslatorService,
               currentSourceLanguage,
               currentTargetLanguage,
-              piecesToTranslateNow.map((ptt) =>
-                ptt.nodes.map((node) =>
-                  filterKeywordsInText(
-                    node.textContent,
-                    customDictionary,
-                    currentPageTranslatorService
-                  )
-                )
-              ),
+              getSourceArray2d(piecesToTranslateNow),
               dontSortResults
             ).then((results) => {
               if (
@@ -1056,11 +1211,7 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
             });
           }
 
-          // Sarashina allows only 6 requests per minute, keep them for the page text
-          if (
-            attributesToTranslateNow.length > 0 &&
-            currentPageTranslatorService !== "sarashina"
-          ) {
+          if (attributesToTranslateNow.length > 0) {
             backgroundTranslateText(
               currentPageTranslatorService,
               currentSourceLanguage,
@@ -1099,11 +1250,20 @@ Promise.all([twpConfig.onReady(), getTabHostName()]).then(function (_) {
     if (document.title.trim().length < 1) return;
     originalPageTitle = document.title;
 
-    backgroundTranslateSingleText(
-      currentPageTranslatorService,
-      currentSourceLanguage,
-      currentTargetLanguage,
-      originalPageTitle
+    // Sarashina: send the title with the page text instead of in a request of its own
+    (currentPageTranslatorService === "sarashina"
+      ? backgroundTranslateHTML(
+          currentPageTranslatorService,
+          currentSourceLanguage,
+          currentTargetLanguage,
+          [[originalPageTitle]]
+        ).then((results) => results?.[0]?.[0])
+      : backgroundTranslateSingleText(
+          currentPageTranslatorService,
+          currentSourceLanguage,
+          currentTargetLanguage,
+          originalPageTitle
+        )
     ).then((result) => {
       if (result) {
         document.title = result;
